@@ -1,13 +1,13 @@
 # %%
 using LinearAlgebra: normalize, norm, ×
 using Rotations: lmult, vmat, hmat, RotMatrix, UnitQuaternion
+using ForwardDiff
 using StaticArrays
 
 Jₜ = [1  0  0; 0  1  0; 0  0  1];
 mₜ = 419.709;
 mₛ = 5.972e21;
 G = 8.6498928e-19;
-
 
 function dynamics(x::Vector, u::Vector)
     xStatic = SVector{length(x)}(x)
@@ -33,6 +33,14 @@ function dynamics(x::SVector{13}, u::SVector{6})
     return [ṗₛₜ; q̇ₛₜ; v̇ₛₜ; ω̇ₛₜ]
 end;
 
+function jacobian(x::Vector, u::Vector)
+    A = ForwardDiff.jacobian(x_temp->dynamics(x_temp, u), x)
+    B = ForwardDiff.jacobian(u_temp->dynamics(x, u_temp), u)
+
+    return (A, B)
+end;
+
+
 # %%
 δt = 0.001; iters = 10000
 x = zeros(13); u = zeros(6) #rand(6);
@@ -40,6 +48,14 @@ x[1:3] = [6.3710, 0, 0]
 x[4:7] = [1., 0, 0, 0]
 x[8:10] = [0, 28.4, 0]
 
+# %%
+temp = [jacobian(x, u) for i in 1:10]
+
+[temp[i][1] for i in 1:10]
+
+
+
+# %%
 x_hist = zeros(iters, length(x))
 
 for i in 1:iters
@@ -58,3 +74,12 @@ pₛₜ_hist = x_hist[:,1:3];
 using Plots
 
 plot(pₛₜ_hist[:,1], pₛₜ_hist[:,2])
+
+# %%
+quiver([1,2,3],[3,2,1], quiver=([1,1,1],[1,2,3]))
+
+# %%
+using OSQP
+
+# %%
+import Pkg; Pkg.add("OSQP")
