@@ -31,15 +31,29 @@ function dynamics(x::SVector{13}, u::SVector{6})
     ω̇ₛₜ = Jₜ \ (𝜏ₜ - ωₛₜ × (Jₜ * ωₛₜ))
     q̇ₛₜ = 0.5 * lmult(qₛₜ) * hmat() * ωₛₜ
     return [ṗₛₜ; q̇ₛₜ; v̇ₛₜ; ω̇ₛₜ]
-end;
+end
 
 function jacobian(x::Vector, u::Vector)
     A = ForwardDiff.jacobian(x_temp->dynamics(x_temp, u), x)
     B = ForwardDiff.jacobian(u_temp->dynamics(x, u_temp), u)
 
     return (A, B)
-end;
+end
 
+function rk4(x, u, h)
+
+    k1 = dynamics(x, u)
+    k2 = dynamics(x + 0.5*h*k1,u)
+    k3 = dynamics(x + 0.5*h*k2,u)
+    k4 = dynamics(x + h*k3,u)
+    xnext = x + (h/6.0)*(k1 + 2*k2 + 2*k3 + k4)
+
+    return xnext
+end
+
+function simulate()
+    return
+end;
 
 # %%
 δt = 0.001; iters = 10000
@@ -48,14 +62,6 @@ x[1:3] = [6.3710, 0, 0]
 x[4:7] = [1., 0, 0, 0]
 x[8:10] = [0, 28.4, 0]
 
-# %%
-temp = [jacobian(x, u) for i in 1:10]
-
-[temp[i][1] for i in 1:10]
-
-
-
-# %%
 x_hist = zeros(iters, length(x))
 
 for i in 1:iters
@@ -74,12 +80,3 @@ pₛₜ_hist = x_hist[:,1:3];
 using Plots
 
 plot(pₛₜ_hist[:,1], pₛₜ_hist[:,2])
-
-# %%
-quiver([1,2,3],[3,2,1], quiver=([1,1,1],[1,2,3]))
-
-# %%
-using OSQP
-
-# %%
-import Pkg; Pkg.add("OSQP")
