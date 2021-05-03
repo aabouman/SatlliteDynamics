@@ -40,43 +40,24 @@ function jacobian(x::Vector, u::Vector)
     return (A, B)
 end
 
-function rk4(x, u, h)
-
+function discreteDynamics(x::Vector, u::Vector, δt::Real)
     k1 = dynamics(x, u)
-    k2 = dynamics(x + 0.5*h*k1,u)
-    k3 = dynamics(x + 0.5*h*k2,u)
-    k4 = dynamics(x + h*k3,u)
-    xnext = x + (h/6.0)*(k1 + 2*k2 + 2*k3 + k4)
+    k2 = dynamics(x + 0.5 * δt * k1, u)
+    k3 = dynamics(x + 0.5 * δt * k2, u)
+    k4 = dynamics(x + δt * k3, u)
+    xnext = x + (δt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
 
     return xnext
 end
 
-function simulate()
-    return
-end;
+function rollout(x0::Vector, Utraj::Vector, δt::Real)
+    N = length(Utraj)
+    Xtraj = [zeros(length(x0)) for _ in 1:N+1]
+    Xtraj[1] = x0
 
-# %%
-δt = 0.001; iters = 10000
-x = zeros(13); u = zeros(6) #rand(6);
-x[1:3] = [6.3710, 0, 0]
-x[4:7] = [1., 0, 0, 0]
-x[8:10] = [0, 28.4, 0]
+    for i in 1:N
+        Xtraj[i+1] = discreteDynamics(Xtraj[i], Utraj[i], δt)
+    end
 
-x_hist = zeros(iters, length(x))
-
-for i in 1:iters
-    x_hist[i,:] .= x
-
-    ẋ = dynamics(x, u)
-    x += ẋ * δt
-
-    pₛₜ, qₛₜ, vₛₜ, ωₛₜ = x[1:3], x[4:7], x[8:10], x[11:13]
-    qₛₜ = normalize(qₛₜ);
+    return Xtraj
 end
-
-pₛₜ_hist = x_hist[:,1:3];
-
-# %%
-using Plots
-
-plot(pₛₜ_hist[:,1], pₛₜ_hist[:,2])
