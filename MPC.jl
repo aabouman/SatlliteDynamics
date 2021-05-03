@@ -50,7 +50,7 @@ function OSQPController(Q::Matrix, R::Matrix, Qf::Matrix, δt::Real, N::Integer,
     n = size(Q)[1]
 
     m = size(R)[2]
-    Np = (N-1)*(n+m)   # number of primals
+    Np = (N-1)*(n-1+m)   # number of primals
 
     P = spzeros(Np, Np)
     q = zeros(Np)
@@ -82,11 +82,6 @@ function buildQP!(ctrl::MPCController{OSQP.Model}, X, U)
     n = length(ctrl.Xref[1])
     m = length(ctrl.Uref[1])
 
-    # Building the Cost QP
-    ctrl.P .= blockdiag(sparse(ctrl.R),
-                        kron(I(ctrl.Nmpc-2), blockdiag(sparse(ctrl.Q), sparse(ctrl.R))),
-                        sparse(ctrl.Qf));
-
     # Initialize the included solver
     OSQP.setup!(ctrl.solver, P=ctrl.P, q=ctrl.q, A=ctrl.C, l=ctrl.lb, u=ctrl.ub,
                 polish=1)
@@ -105,58 +100,58 @@ This should update `ctrl.q`, `ctrl.lb`, and `ctrl.ub`.
 """
 function update_QP!(ctrl::MPCController{OSQP.Model}, X, U)
     N = length(ctrl.Xref)
-    n = length(ctrl.Xref[1])
+    n = length(ctrl.Xref[1]) - 1  #remember n = 12 not 13
     m = length(ctrl.Uref[1])
 
-    # println(size(ctrl.R))
-    # println(size(U[1]))
-    # println(size(ctrl.Uref[1]))
-    # println(size((U[1] - ctrl.Uref[1])))
-    # println("ctrl.Q ", size(ctrl.Q))
-    # println("X ", size(X[1]))
-    # println("Xref", size(ctrl.Xref[1]))
-    # println("X - Xref ", size((X[1] - ctrl.Xref[1])))
-    #
-    # println(vcat([[-ctrl.R*(U[i] - ctrl.Uref[i]); -ctrl.Q * (X[i] - ctrl.Xref[i])] for i in 2:(N-1)]...))
+    iq = 4:7
+    Iq = Diagonal(SA[0,0,0,1,1,1, 0,0,0, 0,0,0])
 
-    # Computing the Dynamics linear terms
-    q = vcat([[-ctrl.R*(U[i] - ctrl.Uref[i]); -ctrl.Q * (X[i] - ctrl.Xref[i])] for i in 2:(N-1)]...,
-             [zeros(m); -ctrl.Qf*(X[end] - ctrl.Xref[end])])
-    ctrl.q .= q
+    println("X[1]= " , X[1])
+    println("Xref[1] " , ctrl.Xref[1])
+    #remember q has u subsumed => q[k] is 19x1 and not 13x1 {u,x}
+    q = [[-ctrl.R * (U[i] - ctrl.Uref[i]); -ctrl.Q * (X[i+1] - ctrl.Xref[i+1])] for i in 1:N-1]
+    q[end][m+1:end] .= -ctrl.Qf * (X[end] - ctrl.Xref[end]) #overwriting the last value
+
+    Qtilde = [state_error_jacobian(X[i+1])' * ctrl.Q * state_error_jacobian(X[i+1]) - Iq * (q[i][m .+ iq]' * X[i+1][iq])
+              for i in 1:(N-1)]
+    Qtilde[end] = state_error_jacobian(X[end])' * ctrl.Qf * state_error_jacobian(X[end]) - Iq * (q[end][m .+ iq]' * X[end][iq])
+
+    qtilde = [blockdiag(sparse(I(m)), sparse(state_error_jacobian(X[i+1])')) * q[i] for i in 1:N-1]
+
+    # Building the Cost QP
+    ctrl.P .= blockdiag([blockdiag(sparse(ctrl.R), sparse(Qtilde[i])) for i=1:N-1]...)
+
+    ctrl.q .= vcat(qtilde...)
 
     # Computing the Dynamics constraints
-    A = [jacobian(ctrl.Xref[i], ctrl.Uref[i])[1] for i in 1:N-1]
-    B = [jacobian(ctrl.Xref[i], ctrl.Uref[i])[2] for i in 1:N-1]
+    A = [state_error_jacobian(X[i+1])' *
+         jacobian(ctrl.Xref[i], ctrl.Uref[i])[1] *
+         state_error_jacobian(X[i]) for i in 1:N-1]
+    B = [(state_error_jacobian(X[i+1])' *
+          jacobian(ctrl.Xref[i], ctrl.Uref[i])[2]) for i in 1:N-1]
 
     dynConstMat = blockdiag([sparse([B[i]  -I(n)]) for i in 1:(N-1)]...)
     dynConstMat += blockdiag(spzeros(n, m),
                              [sparse([A[i]  zeros(n, m)]) for i in 2:(N-2)]...,
                              sparse([A[end]  zeros(n, m+n)]))
     earthRadiusConstMat =
-        blockdiag([sparse([zeros(m)'  normalize(x[1:3])'  zeros(n-3)';]) for x in ctrl.Xref[2:end]]...)
-
-    println("dynConstMat ", size(dynConstMat))
-    println("earthRadiusConstMat ", size(earthRadiusConstMat))
+        blockdiag([sparse([zeros(m)'  normalize(xref[1:3])'  zeros(n-3)';]) for xref in ctrl.Xref[2:end]]...)
 
     # Concatenate the dynamics constraints and the earth radius constraint
     ctrl.C .= vcat(dynConstMat, earthRadiusConstMat)
 
     # Compute the equality constraints
+    dynConstlb = vcat(-A[1] * state_error(X[1], ctrl.Xref[1]), zeros((N-2)*n))
+    dynConstub = vcat(-A[1] * state_error(X[1], ctrl.Xref[1]), zeros((N-2)*n))
 
-    # state_error()
-    # state_error_jacobian()
-
-
-    dynConstlb = vcat(-A[1] * (X[1] - ctrl.Xref[1]), zeros((N-2)*n))
-    dynConstub = vcat(-A[1] * (X[1] - ctrl.Xref[1]), zeros((N-2)*n))
-
-    earthRadiusConstlb = [-norm(xref) + earthRadius for xref in ctrl.Xref[2:end]]
+    earthRadiusConstlb = [-norm(xref[1:3]) + earthRadius for xref in ctrl.Xref[2:end]]
     earthRadiusConstub = [Inf for xref in ctrl.Xref[2:end]]
+
     # Concatenate the dynamics constraints and earth radius constraint bounds
     ctrl.lb .= vcat(dynConstlb, earthRadiusConstlb)
     ctrl.ub .= vcat(dynConstub, earthRadiusConstub)
 
-    OSQP.update!(ctrl.solver, q=ctrl.q, A=ctrl.C, l=ctrl.lb, u=ctrl.ub)
+    OSQP.update!(ctrl.solver, P=ctrl.P, q=ctrl.q, A=ctrl.C, l=ctrl.lb, u=ctrl.ub)
     return nothing
 end
 
@@ -188,21 +183,23 @@ function updateRef!(ctrl::MPCController{OSQP.Model}, Xₖ, Uₖ, Xₜₖ, Uₜ�
     n = length(ctrl.Xref[1])
     m = length(ctrl.Uref[1])
 
-    ctrl.Xref = stateInterpolate(Xₖ[1], Xₜₖ[end], N)
-    ctrl.Uref = Uₖ
+    ctrl.Xref .= stateInterpolate(Xₖ[1], Xₜₖ[end], N)
+    ctrl.Uref .= Uₖ
 
     return nothing
 end
 
 function solve_QP!(ctrl::MPCController{OSQP.Model}, Xₜₖ, Uₜₖ)
     N = length(ctrl.Xref)
-    n = length(ctrl.Xref[1])
+    n = length(ctrl.Xref[1]) - 1 #remember n = 12 not 13 as dealing with errors
     m = length(ctrl.Uref[1])
 
     results = OSQP.solve!(ctrl.solver)
 
-    Xₖ₊₁ = ctrl.Xref[2:end] + kron(I(N-1), blockdiag(spzeros(m,m), I(n))) * results.x
     Uₖ₊₁ = ctrl.Uref + kron(I(N-1), blockdiag(I(m), spzeros(n,n))) * results.x
+    xdelta = [state_error_inv(results.x[(n+m)*(i-1) .+ m+1:m+n]) for i=1:N-1]
+    Xₖ₊₁ = ctrl.Xref[2:end] + xdelta
+    Xₖ₊₁ = vcat(Xₖ₊₁, [discreteDynamics(Xₖ₊₁[end], Uₖ₊₁[end], ctrl.δt)])
 
     Xₜₖ₊₁ = rollout(Xₜₖ[2], Uₜₖ, ctrl.δt)
     Uₜₖ₊₁ = Uₜₖ
@@ -225,15 +222,10 @@ function simulate(ctrl::MPCController{OSQP.Model}, xₛc_init::Vector, xₛₜ_i
     Uₖ = [zeros(m) for _ in 1:N-1]
     Uₜₖ = [zeros(m) for _ in 1:N-1]
     Xₜₖ = rollout(xₛₜ_init, Uₜₖ, ctrl.δt)
-
-    # println("Xₜₖ[end] ", size(Xₜₖ[end]))
-    # println("xₛc_init ", size(xₛc_init))
-    # println("Xₜₖ[end] ", (Xₜₖ[end]))
-    # println("xₛc_init ", (xₛc_init))
-
     Xₖ = stateInterpolate(xₛc_init, Xₜₖ[end], N)
 
-    # println("X_k ", size(Xₖ))
+    #buld initial reference trajectory
+    updateRef!(ctrl, Xₖ, Uₖ, Xₜₖ, Uₜₖ)
 
     buildQP!(ctrl, Xₖ, Uₖ)
 
@@ -243,12 +235,18 @@ function simulate(ctrl::MPCController{OSQP.Model}, xₛc_init::Vector, xₛₜ_i
     x_hist[1] = xₛc_init
 
     for i in 1:num_steps
+        println("step = " , i)
+        println("X[1] in loop " , X[1])
+        println("Xref[1] in loop " , ctrl.Xtrl[1])
         updateRef!(ctrl, Xₖ, Uₖ, Xₜₖ, Uₜₖ)
+        println("Xref after update " , ctrl.Xref[1])
         update_QP!(ctrl, Xₖ, Uₖ)
         Xₖ, Uₖ, Xₜₖ, Uₜₖ = solve_QP!(ctrl, Xₜₖ, Uₜₖ)
 
         x_hist[i+1] = Xₖ[1]
         u_hist[i] = Uₖ[1]
+
+        println("############################")
     end
 
     return x_hist, u_hist

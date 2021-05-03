@@ -61,3 +61,51 @@ function rollout(x0::Vector, Utraj::Vector, δt::Real)
 
     return Xtraj
 end
+
+# function lmult(q)
+#     a, b, c, d = q
+#     qmat = [a  -b  -c  -d;
+#             b   a  -d   c;
+#             c   d   a  -b;
+#             d  -c   b   a];
+#     return qmat
+# end
+
+function state_error(x, x0)
+    ip, iq, iv, iw = 1:3, 4:7, 8:10, 11:13
+    q = x[iq]; q0 = x0[iq]
+    qe = lmult(UnitQuaternion(q0))' * q
+    qe = qe[1] .* qe[2:end]
+
+    dx = [x[ip] - x0[ip]; qe; x[iv] - x0[iv]; x[iw] - x0[iw]]
+    return dx
+end
+
+function state_error_inv(x, dx)
+    ip, iq, iv, iw = 1:3, 4:7, 8:10, 11:13
+
+    p_new = x[ip] + dx[1:3]
+    q_new = lmult(UnitQuaternion(x[iq]))*dx[4:6]
+    v_new = x[iv] + dx[7:9]
+    w_new = x[iw] + dx[10:12]
+
+    return [p_new  q_new  v_new  w_new]
+end
+
+function attitude_jacobian(q)
+    q̂ = [ 0    -q[4]  q[3];
+          q[4]  0    -q[2];
+         -q[3]  q[2]  0]
+    return SMatrix{4,3}(vcat(-q[2:end]', q[1] * I(3) + q̂))
+end
+
+
+function state_error_jacobian(x)
+    ip, iq, iv, iw = 1:3, 4:7, 8:10, 11:13
+    q = x[iq]
+    M = blockdiag(sparse(I(3)),
+                  sparse(attitude_jacobian(q)),
+                  sparse(I(6)))
+
+    return Matrix(M)
+end

@@ -2,7 +2,7 @@ include("dynamics.jl")
 include("MPC.jl")
 
 # %%
-n = 13; m = 6;
+n = 12; m = 6;
 N = 100
 
 Q = Matrix(Diagonal([1.,1,1,0,0,0,0,1,1,1,0,0,0])) * 10
