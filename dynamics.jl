@@ -75,7 +75,8 @@ function state_error(x, x0)
     ip, iq, iv, iw = 1:3, 4:7, 8:10, 11:13
     q = x[iq]; q0 = x0[iq]
     qe = lmult(UnitQuaternion(q0))' * q
-    qe = qe[1] .* qe[2:end]
+    #changing to RP
+    qe = qe[2:end] ./ qe[1]
 
     dx = [x[ip] - x0[ip]; qe; x[iv] - x0[iv]; x[iw] - x0[iw]]
     return dx
