@@ -1,6 +1,6 @@
 # %%
 using LinearAlgebra: normalize, norm, ×
-using Rotations: lmult, vmat, hmat, RotMatrix, UnitQuaternion
+using Rotations: lmult, hmat, RotMatrix, UnitQuaternion, RotationError, add_error, rotation_error, params
 using ForwardDiff
 using StaticArrays
 
@@ -26,7 +26,7 @@ function dynamics(x::SVector{13}, u::SVector{6})
 
     ṗₛₜ = vₛₜ
     Rₛₜ = RotMatrix(UnitQuaternion(qₛₜ...))
-    v̇ₛₜ = - inv(Rₛₜ) * (G * mₛ / norm(pₛₜ)^3) * pₛₜ + 𝑓ₜ / mₜ  - ωₛₜ × vₛₜ
+    v̇ₛₜ = 𝑓ₜ / mₜ  - ωₛₜ × vₛₜ
 
     ω̇ₛₜ = Jₜ \ (𝜏ₜ - ωₛₜ × (Jₜ * ωₛₜ))
     q̇ₛₜ = 0.5 * lmult(qₛₜ) * hmat() * ωₛₜ
@@ -62,32 +62,24 @@ function rollout(x0::Vector, Utraj::Vector, δt::Real)
     return Xtraj
 end
 
-# function lmult(q)
-#     a, b, c, d = q
-#     qmat = [a  -b  -c  -d;
-#             b   a  -d   c;
-#             c   d   a  -b;
-#             d  -c   b   a];
-#     return qmat
-# end
-
-function state_error(x, x0)
+function state_error(x, xref)
     ip, iq, iv, iw = 1:3, 4:7, 8:10, 11:13
-    q = x[iq]; q0 = x0[iq]
-    qe = lmult(UnitQuaternion(q0))' * q
-    qe = qe[1] .* qe[2:end]
-
-    dx = [x[ip] - x0[ip]; qe; x[iv] - x0[iv]; x[iw] - x0[iw]]
+    q = x[iq]; qref = xref[iq]
+    qe = Vector(rotation_error(UnitQuaternion(q), UnitQuaternion(qref),
+                               CayleyMap()))
+    dx = [x[ip] - xref[ip]; qe; x[iv] - xref[iv]; x[iw] - xref[iw]]
     return dx
 end
 
-function state_error_inv(x, dx)
+function state_error_inv(xref, dx)
     ip, iq, iv, iw = 1:3, 4:7, 8:10, 11:13
 
-    p_new = x[ip] + dx[1:3]
-    q_new = lmult(UnitQuaternion(x[iq])) * hmat() * dx[4:6]
-    v_new = x[iv] + dx[7:9]
-    w_new = x[iw] + dx[10:12]
+    p_new = xref[ip] + dx[1:3]
+    q_new = add_error(UnitQuaternion(xref[iq]),
+                      RotationError(SVector{3}(dx[4:6]), CayleyMap()))
+    q_new = params(q_new)
+    v_new = xref[iv] + dx[7:9]
+    w_new = xref[iw] + dx[10:12]
 
     return vcat(p_new, q_new, v_new, w_new)
 end

@@ -85,8 +85,6 @@ function buildQP!(ctrl::MPCController{OSQP.Model}, X, U)
     iq = 4:7
     Iq = Diagonal(SA[0,0,0, 1,1,1, 0,0,0, 0,0,0])
 
-    println("X[1]= " , X[1])
-    println("Xref[1] " , ctrl.Xref[1])
     #remember q has u subsumed => q[k] is 19x1 and not 13x1 {u,x}
     q = [[-ctrl.R * (U[i] - ctrl.Uref[i]); -ctrl.Q * (X[i+1] - ctrl.Xref[i+1])] for i in 1:N-1]
     q[end][m+1:end] .= -ctrl.Qf * (X[end] - ctrl.Xref[end]) #overwriting the last value
@@ -113,22 +111,18 @@ function buildQP!(ctrl::MPCController{OSQP.Model}, X, U)
     dynConstMat += blockdiag(spzeros(n, m),
                              [sparse([A[i]  zeros(n, m)]) for i in 2:(N-2)]...,
                              sparse([A[end]  zeros(n, m+n)]))
-    earthRadiusConstMat =
-        blockdiag([sparse([zeros(m)'  normalize(xref[1:3])'  zeros(n-3)';]) for xref in ctrl.Xref[2:end]]...)
 
     # Concatenate the dynamics constraints and the earth radius constraint
-    ctrl.C .= vcat(dynConstMat, earthRadiusConstMat)
+    ctrl.C .= vcat(dynConstMat)
 
     # Compute the equality constraints
     dynConstlb = vcat(-A[1] * state_error(X[1], ctrl.Xref[1]), zeros((N-2)*n))
+    println("Dynamic Constraints: ", dynConstlb[1:n])
     dynConstub = vcat(-A[1] * state_error(X[1], ctrl.Xref[1]), zeros((N-2)*n))
 
-    earthRadiusConstlb = [-norm(xref[1:3]) + earthRadius for xref in ctrl.Xref[2:end]]
-    earthRadiusConstub = [Inf for xref in ctrl.Xref[2:end]]
-
     # Concatenate the dynamics constraints and earth radius constraint bounds
-    ctrl.lb .= vcat(dynConstlb, earthRadiusConstlb)
-    ctrl.ub .= vcat(dynConstub, earthRadiusConstub)
+    ctrl.lb .= vcat(dynConstlb)
+    ctrl.ub .= vcat(dynConstub)
 
     # Initialize the included solver
     OSQP.setup!(ctrl.solver, P=ctrl.P, q=ctrl.q, A=ctrl.C, l=ctrl.lb, u=ctrl.ub,
@@ -160,11 +154,14 @@ end
 
 function updateRef!(ctrl::MPCController{OSQP.Model}, Xₖ, Uₖ, Xₜₖ, Uₜₖ)
     N = length(ctrl.Xref)
-    n = length(ctrl.Xref[1])
+    n = length(ctrl.Xref[1]) - 1
     m = length(ctrl.Uref[1])
 
+    # pₛₜᵗ, qₛₜ, vₛₜᵗ, wₛₜ = Xₜₖ[end][1:3], Xₜₖ[end][4:7], Xₜₖ[end][8:10], Xₜₖ[end][11:13]
+    # UnitQuaternion()
+
     ctrl.Xref .= stateInterpolate(Xₖ[1], Xₜₖ[end], N)
-    ctrl.Uref .= Uₖ
+    ctrl.Uref .= [zeros(m) for _ in N-1] # Uₖ
 
     return nothing
 end
@@ -176,19 +173,15 @@ function solve_QP!(ctrl::MPCController{OSQP.Model}, Xₖ, Xₜₖ, Uₜₖ)
 
     results = OSQP.solve!(ctrl.solver)
 
-    # Uₖ₊₁ = ctrl.Uref + kron(I(N-1), blockdiag(sparse(I(m)), spzeros(n,n))) * results.x
+    ΔU = [results.x[(n+m)*(i-1) .+ (1:m)] for i=1:N-1]
+    Uₖ₊₁ = ctrl.Uref + ΔU
 
-    # println("ctrl.Uref ", size(ctrl.Uref[2]))
-    # println("[results.x[(n+m)*(i-1) .+ 1:m] for i=1:N-1] ", size([results.x[(n+m)*(i-1) .+ (1:m)] for i=1:N-1][2]))
-    # println("[results.x[(n+m)*(i-1) .+ 1:m] for i=1:N-1] ", size(results.x[(n+m)*(1) + 1:(n+m)*(1) + m]))
-    # println("results.x ", size(results.x))
-
-
-    Uₖ₊₁ = ctrl.Uref + [results.x[(n+m)*(i-1) .+ (1:m)] for i=1:N-1]
-
-    xdelta = [state_error_inv(Xₖ[i], results.x[(n+m)*(i-1) .+ (m+1:m+n)]) for i=1:N-1]
-    Xₖ₊₁ = ctrl.Xref[2:end] + xdelta
+    Xₖ₊₁ = [state_error_inv(ctrl.Xref[i+1], results.x[(n+m)*(i-1) .+ (m+1:m+n)]) for i=1:N-1]
+    # Xₖ₊₁ = ctrl.Xref[2:end] + ΔX
     Xₖ₊₁ = vcat(Xₖ₊₁, [discreteDynamics(Xₖ₊₁[end], Uₖ₊₁[end], ctrl.δt)])
+
+    # println("ΔX = " , ΔX[1])
+    # println("ΔU = " , ΔU[1])
 
     Xₜₖ₊₁ = rollout(Xₜₖ[2], Uₜₖ, ctrl.δt)
     Uₜₖ₊₁ = Uₜₖ
@@ -201,7 +194,7 @@ controller function is called as controller(x), where x is a state vector
 (length 13)
 """
 function simulate(ctrl::MPCController{OSQP.Model}, xₛc_init::Vector, xₛₜ_init::Vector;
-                  num_steps=1000, δt=0.001)
+                  num_steps=1000)
     N = length(ctrl.Xref)
     n = length(ctrl.Xref[1])
     m = length(ctrl.Uref[1])
@@ -220,11 +213,15 @@ function simulate(ctrl::MPCController{OSQP.Model}, xₛc_init::Vector, xₛₜ_i
 
     for i in 1:num_steps
         println("step = " , i)
-        #println("X[1] in loop " , Xₖ[1])
 
         updateRef!(ctrl, Xₖ, Uₖ, Xₜₖ, Uₜₖ)
 
-        #println("Xref after update " , ctrl.Xref[1])
+        println("Xₖ[1] = " , Xₖ[1])
+        println("Xref[1] = " , ctrl.Xref[1])
+        println("Xₖ[2] = " , Xₖ[2])
+        println("Xref[2] = " , ctrl.Xref[2])
+        println("Xₖ[end] = " , Xₖ[end])
+        println("Xref[end] = " , ctrl.Xref[end])
 
         buildQP!(ctrl, Xₖ, Uₖ)
 
@@ -233,8 +230,8 @@ function simulate(ctrl::MPCController{OSQP.Model}, xₛc_init::Vector, xₛₜ_i
         x_hist[i+1] = Xₖ[1]
         u_hist[i] = Uₖ[1]
 
-        println("actual x: " , Xₖ[1])
-        println("actual u: " , Uₖ[1])
+        println("QP solution x: " , Xₖ[1])
+        println("QP solution u: " , Uₖ[1])
         println("############################")
     end
 
