@@ -79,32 +79,11 @@ Any keyword arguments will be passed to `initialize_solver!`.
 function buildQP!(ctrl::MPCController{OSQP.Model}, X, U)
     #Build QP matrices for OSQP
     N = length(ctrl.Xref)
-    n = length(ctrl.Xref[1])
-    m = length(ctrl.Uref[1])
-
-    # Initialize the included solver
-    OSQP.setup!(ctrl.solver, P=ctrl.P, q=ctrl.q, A=ctrl.C, l=ctrl.lb, u=ctrl.ub,
-                polish=1)
-
-    update_QP!(ctrl::MPCController{OSQP.Model}, X, U)
-
-    return nothing
-end
-
-
-"""
-    update_QP!(ctrl::MPCController, x, time)
-
-Update the vectors in the QP problem for the current state `x` and time `time`.
-This should update `ctrl.q`, `ctrl.lb`, and `ctrl.ub`.
-"""
-function update_QP!(ctrl::MPCController{OSQP.Model}, X, U)
-    N = length(ctrl.Xref)
     n = length(ctrl.Xref[1]) - 1  #remember n = 12 not 13
     m = length(ctrl.Uref[1])
 
     iq = 4:7
-    Iq = Diagonal(SA[0,0,0,1,1,1, 0,0,0, 0,0,0])
+    Iq = Diagonal(SA[0,0,0, 1,1,1, 0,0,0, 0,0,0])
 
     println("X[1]= " , X[1])
     println("Xref[1] " , ctrl.Xref[1])
@@ -112,9 +91,9 @@ function update_QP!(ctrl::MPCController{OSQP.Model}, X, U)
     q = [[-ctrl.R * (U[i] - ctrl.Uref[i]); -ctrl.Q * (X[i+1] - ctrl.Xref[i+1])] for i in 1:N-1]
     q[end][m+1:end] .= -ctrl.Qf * (X[end] - ctrl.Xref[end]) #overwriting the last value
 
-    Qtilde = [state_error_jacobian(X[i+1])' * ctrl.Q * state_error_jacobian(X[i+1]) - Iq * (q[i][m .+ iq]' * X[i+1][iq])
+    Qtilde = [state_error_jacobian(X[i+1])' * ctrl.Q * state_error_jacobian(X[i+1]) - Iq * (q[i][m .+ (iq)]' * X[i+1][iq])
               for i in 1:(N-1)]
-    Qtilde[end] = state_error_jacobian(X[end])' * ctrl.Qf * state_error_jacobian(X[end]) - Iq * (q[end][m .+ iq]' * X[end][iq])
+    Qtilde[end] = state_error_jacobian(X[end])' * ctrl.Qf * state_error_jacobian(X[end]) - Iq * (q[end][m .+ (iq)]' * X[end][iq])
 
     qtilde = [blockdiag(sparse(I(m)), sparse(state_error_jacobian(X[i+1])')) * q[i] for i in 1:N-1]
 
@@ -151,10 +130,11 @@ function update_QP!(ctrl::MPCController{OSQP.Model}, X, U)
     ctrl.lb .= vcat(dynConstlb, earthRadiusConstlb)
     ctrl.ub .= vcat(dynConstub, earthRadiusConstub)
 
-    OSQP.update!(ctrl.solver, P=ctrl.P, q=ctrl.q, A=ctrl.C, l=ctrl.lb, u=ctrl.ub)
+    # Initialize the included solver
+    OSQP.setup!(ctrl.solver, P=ctrl.P, q=ctrl.q, A=ctrl.C, l=ctrl.lb, u=ctrl.ub,
+                polish=1, verbose=0)
     return nothing
 end
-
 
 """
     find the reference trajectory using
@@ -189,15 +169,24 @@ function updateRef!(ctrl::MPCController{OSQP.Model}, Xₖ, Uₖ, Xₜₖ, Uₜ�
     return nothing
 end
 
-function solve_QP!(ctrl::MPCController{OSQP.Model}, Xₜₖ, Uₜₖ)
+function solve_QP!(ctrl::MPCController{OSQP.Model}, Xₖ, Xₜₖ, Uₜₖ)
     N = length(ctrl.Xref)
     n = length(ctrl.Xref[1]) - 1 #remember n = 12 not 13 as dealing with errors
     m = length(ctrl.Uref[1])
 
     results = OSQP.solve!(ctrl.solver)
 
-    Uₖ₊₁ = ctrl.Uref + kron(I(N-1), blockdiag(I(m), spzeros(n,n))) * results.x
-    xdelta = [state_error_inv(results.x[(n+m)*(i-1) .+ m+1:m+n]) for i=1:N-1]
+    # Uₖ₊₁ = ctrl.Uref + kron(I(N-1), blockdiag(sparse(I(m)), spzeros(n,n))) * results.x
+
+    # println("ctrl.Uref ", size(ctrl.Uref[2]))
+    # println("[results.x[(n+m)*(i-1) .+ 1:m] for i=1:N-1] ", size([results.x[(n+m)*(i-1) .+ (1:m)] for i=1:N-1][2]))
+    # println("[results.x[(n+m)*(i-1) .+ 1:m] for i=1:N-1] ", size(results.x[(n+m)*(1) + 1:(n+m)*(1) + m]))
+    # println("results.x ", size(results.x))
+
+
+    Uₖ₊₁ = ctrl.Uref + [results.x[(n+m)*(i-1) .+ (1:m)] for i=1:N-1]
+
+    xdelta = [state_error_inv(Xₖ[i], results.x[(n+m)*(i-1) .+ (m+1:m+n)]) for i=1:N-1]
     Xₖ₊₁ = ctrl.Xref[2:end] + xdelta
     Xₖ₊₁ = vcat(Xₖ₊₁, [discreteDynamics(Xₖ₊₁[end], Uₖ₊₁[end], ctrl.δt)])
 
@@ -224,11 +213,6 @@ function simulate(ctrl::MPCController{OSQP.Model}, xₛc_init::Vector, xₛₜ_i
     Xₜₖ = rollout(xₛₜ_init, Uₜₖ, ctrl.δt)
     Xₖ = stateInterpolate(xₛc_init, Xₜₖ[end], N)
 
-    #buld initial reference trajectory
-    updateRef!(ctrl, Xₖ, Uₖ, Xₜₖ, Uₜₖ)
-
-    buildQP!(ctrl, Xₖ, Uₖ)
-
     x_hist = [zeros(n) for _ in 1:num_steps+1]
     u_hist = [zeros(n) for _ in 1:num_steps]
 
@@ -236,16 +220,21 @@ function simulate(ctrl::MPCController{OSQP.Model}, xₛc_init::Vector, xₛₜ_i
 
     for i in 1:num_steps
         println("step = " , i)
-        println("X[1] in loop " , X[1])
-        println("Xref[1] in loop " , ctrl.Xtrl[1])
+        #println("X[1] in loop " , Xₖ[1])
+
         updateRef!(ctrl, Xₖ, Uₖ, Xₜₖ, Uₜₖ)
-        println("Xref after update " , ctrl.Xref[1])
-        update_QP!(ctrl, Xₖ, Uₖ)
-        Xₖ, Uₖ, Xₜₖ, Uₜₖ = solve_QP!(ctrl, Xₜₖ, Uₜₖ)
+
+        #println("Xref after update " , ctrl.Xref[1])
+
+        buildQP!(ctrl, Xₖ, Uₖ)
+
+        Xₖ, Uₖ, Xₜₖ, Uₜₖ = solve_QP!(ctrl, Xₖ, Xₜₖ, Uₜₖ)
 
         x_hist[i+1] = Xₖ[1]
         u_hist[i] = Uₖ[1]
 
+        println("actual x: " , Xₖ[1])
+        println("actual u: " , Uₖ[1])
         println("############################")
     end
 

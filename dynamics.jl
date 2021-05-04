@@ -85,11 +85,11 @@ function state_error_inv(x, dx)
     ip, iq, iv, iw = 1:3, 4:7, 8:10, 11:13
 
     p_new = x[ip] + dx[1:3]
-    q_new = lmult(UnitQuaternion(x[iq]))*dx[4:6]
+    q_new = lmult(UnitQuaternion(x[iq])) * hmat() * dx[4:6]
     v_new = x[iv] + dx[7:9]
     w_new = x[iw] + dx[10:12]
 
-    return [p_new  q_new  v_new  w_new]
+    return vcat(p_new, q_new, v_new, w_new)
 end
 
 function attitude_jacobian(q)
