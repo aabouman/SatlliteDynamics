@@ -1,4 +1,3 @@
-include("dynamics.jl")
 include("MPC.jl");
 
 # %%
@@ -12,16 +11,13 @@ Qf = Matrix(Diagonal([1.,1,1,0,0,0,0,1,1,1,0,0,0])) * 10.
 ctrl = OSQPController(Q, R, Qf, δt, N, (N-1)*(n));
 
 # %%
-xₛc_init = [earthRadius+2, 0, 0, 1., 0, 0, 0, 0, 28.4, 0, 0, 0, 0]
-xₛₜ_init = [earthRadius+1, 0, 0, 0, 0, 1., 0, 0, 28.4, 0, 0, 0, 0]
-
-x_hist, u_hist = simulate(ctrl, xₛc_init, xₛₜ_init; num_steps=1000, verbose=false);
+jacobian(rand(16))
 
 # %%
-include("dynamics.jl")
-include("MPC.jl");
+x_init = [earthRadius+2, 0, 0, 1., 0, 0, 0, 0, 28.4, 0, 0, 0, 0,
+          0, 0, 0]
 
-TargetSatellite()
+x_hist, u_hist = simulate(ctrl, x_init; num_steps=1000, verbose=false);
 
 # %%
 using Plots

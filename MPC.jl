@@ -1,7 +1,9 @@
 using OSQP
 using SparseArrays
 using LinearAlgebra
-using Rotations: UnitQuaternion, params
+using Rotations: UnitQuaternion, params, RotXYZ
+
+include("dynamics.jl")
 
 earthRadius = 6.37814  # Megameters
 
@@ -76,7 +78,7 @@ should be constant between MPC iterations.
 
 Any keyword arguments will be passed to `initialize_solver!`.
 """
-function buildQP!(ctrl::MPCController{OSQP.Model}, X, U)
+function buildQP!(ctrl::MPCController{OSQP.Model})
     #Build QP matrices for OSQP
     N = length(ctrl.Xref)
     n = length(ctrl.Xref[1]) - 1  #remember n = 12 not 13
@@ -118,8 +120,8 @@ function buildQP!(ctrl::MPCController{OSQP.Model}, X, U)
     ctrl.C .= vcat(dynConstMat)
 
     # Compute the equality constraints
-    dynConstlb = vcat(-A[1] * state_error(X[1], ctrl.Xref[1]), zeros((N-2)*n))
-    dynConstub = vcat(-A[1] * state_error(X[1], ctrl.Xref[1]), zeros((N-2)*n))
+    dynConstlb = vcat(zeros((N-1)*n)) #-A[1] * state_error(X[1], ctrl.Xref[1]),
+    dynConstub = vcat(zeros((N-1)*n)) #-A[1] * state_error(X[1], ctrl.Xref[1]),
 
     # Concatenate the dynamics constraints and earth radius constraint bounds
     ctrl.lb .= vcat(dynConstlb)
@@ -153,18 +155,39 @@ function stateInterpolate(x_init, x_final, N)
     return [xref[:,i] for i in 1:N]
 end
 
-function updateRef!(ctrl::MPCController{OSQP.Model}, Xₖ, Uₖ, Xₜₖ, Uₜₖ)
+function stateInterpolate_CW(x_init::Vector, final_euler::Vector, N::Real)
+    # initial
+    p1, q1, v1, w1 = x_init[1:3], x_init[4:7], x_init[8:10], x_init[11:13]
+    # final
+    q2 = params(UnitQuaternion(RotXYZ(final_euler...)))
+    w2 = Ω
+
+    # quaternion
+    ps = range(p1, zeros(3), length=N)
+    qs = slerp(UnitQuaternion(q1), UnitQuaternion(q2), N)
+    vs = range(v1, zeros(3), length=N)
+    ws = range(w1, w2, length=N)
+
+    # Concatenate
+    xref = vcat(hcat(ps...), hcat(qs...), hcat(vs...), hcat(ws...))
+
+    return [xref[:,i] for i in 1:N]
+end
+
+function updateRef!(ctrl::MPCController{OSQP.Model}, Xₖ::Vector, Uₖ::Vector)
     N = length(ctrl.Xref)
     n = length(ctrl.Xref[1]) - 1
     m = length(ctrl.Uref[1])
 
-    ctrl.Xref .= stateInterpolate(Xₖ[1], Xₜₖ[end], N)
+    final_euler = (Xₖ[end][end-2:end] + Ω * ctrl.δt)
+
+    ctrl.Xref .= stateInterpolate_CW(Xₖ[2], final_euler, N)
     ctrl.Uref .= [zeros(m) for _ in N-1] # Uₖ
 
     return nothing
 end
 
-function solve_QP!(ctrl::MPCController{OSQP.Model}, Xₖ, Xₜₖ, Uₜₖ)
+function solve_QP!(ctrl::MPCController{OSQP.Model}, Xₖ::Vector)
     N = length(ctrl.Xref)
     n = length(ctrl.Xref[1]) - 1 #remember n = 12 not 13 as dealing with errors
     m = length(ctrl.Uref[1])
@@ -174,13 +197,11 @@ function solve_QP!(ctrl::MPCController{OSQP.Model}, Xₖ, Xₜₖ, Uₜₖ)
     ΔU = [results.x[(n+m)*(i-1) .+ (1:m)] for i=1:N-1]
     Uₖ₊₁ = ctrl.Uref + ΔU
 
-    Xₖ₊₁ = [state_error_inv(ctrl.Xref[i+1], results.x[(n+m)*(i-1) .+ (m+1:m+n)]) for i=1:N-1]
+    Xₖ₊₁ = [state_error_inv(ctrl.Xref[i+1], results.x[(n+m)*(i-1) .+ (m+1:m+n)])
+            for i=1:N-1]
     Xₖ₊₁ = vcat(Xₖ₊₁, [discreteDynamics(Xₖ₊₁[end], Uₖ₊₁[end], ctrl.δt)])
 
-    Xₜₖ₊₁ = rollout(Xₜₖ[2], Uₜₖ, ctrl.δt)
-    Uₜₖ₊₁ = Uₜₖ
-
-    return Xₖ₊₁, Uₖ₊₁, Xₜₖ₊₁, Uₜₖ₊₁
+    return Xₖ₊₁, Uₖ₊₁
 end
 
 
@@ -189,7 +210,7 @@ end
 controller function is called as controller(x), where x is a state vector
 (length 13)
 """
-function simulate(ctrl::MPCController{OSQP.Model}, xₛc_init::Vector, xₛₜ_init::Vector;
+function simulate(ctrl::MPCController{OSQP.Model}, x_init::Vector;
                   num_steps=1000, verbose=false)
     N = length(ctrl.Xref)
     n = length(ctrl.Xref[1])
@@ -197,20 +218,26 @@ function simulate(ctrl::MPCController{OSQP.Model}, xₛc_init::Vector, xₛₜ_i
 
     num_steps ≥ N || error("Number of steps being simulated must be ≥ the controller time horizon")
 
-    Uₖ = [rand(m) for _ in 1:N-1]
-    Uₜₖ = [zeros(m) for _ in 1:N-1]
-    Xₜₖ = rollout(xₛₜ_init, Uₜₖ, ctrl.δt)
-    Xₖ = stateInterpolate(xₛc_init, Xₜₖ[end], N)
+    #make initial
+    U0 = [rand(m) for _ in 1:N-1]
+    X0 = [x_init for _ in 1:N]
+
+    # use updateRef to get reference before starting loop
+    # updated in function
+    updateRef!(ctrl, X0, U0)
+
+    Xₖ = X0
+    Uₖ = U0
 
     x_hist = []
     u_hist = []
 
-    x_hist = vcat(x_hist, [xₛc_init])
+    x_hist = vcat(x_hist, [x_init])
 
     for i in 1:num_steps
         !verbose && print("step = $i\r")
 
-        updateRef!(ctrl, Xₖ, Uₖ, Xₜₖ, Uₜₖ)
+        updateRef!(ctrl, Xₖ, Uₖ)
 
         !verbose || println("Xₖ[1] = " , Xₖ[1])
         !verbose || println("Xref[1] = " , ctrl.Xref[1])
@@ -221,9 +248,9 @@ function simulate(ctrl::MPCController{OSQP.Model}, xₛc_init::Vector, xₛₜ_i
         !verbose || println("Uₖ[1] = " , Uₖ[1])
         !verbose || println("Uref[1] = " , ctrl.Uref[1])
 
-        buildQP!(ctrl, Xₖ, Uₖ)
+        buildQP!(ctrl)
 
-        Xₖ, Uₖ, Xₜₖ, Uₜₖ = solve_QP!(ctrl, Xₖ, Xₜₖ, Uₜₖ)
+        Xₖ, Uₖ = solve_QP!(ctrl, Xₖ)
 
         x_hist = vcat(x_hist, [Xₖ[1]])
         u_hist = vcat(u_hist, [Uₖ[1]])
