@@ -219,14 +219,18 @@ function simulate(ctrl::MPCController{OSQP.Model}, x_init::Vector;
 
     x_hist = []; u_hist = []
 
+    x_ref_hist = []
+
     x_hist = vcat(x_hist, [x_next])
 
     for i in 1:num_steps
         !verbose && print("step = $i\r")
 
-        updateRef!(ctrl, x_next)
-
         !verbose || println("step = " , i)
+        updateRef!(ctrl, x_next)
+        !verbose || println("x_curr = " , x_next)
+        !verbose || println("Xref[2] = " , ctrl.Xref[2])
+
         # !verbose || println("Xₖ[1] = " , Xₖ[1])
         # !verbose || println("Xref[1] = " , ctrl.Xref[1])
         # !verbose || println("Xₖ[2] = " , Xₖ[2])
@@ -240,17 +244,18 @@ function simulate(ctrl::MPCController{OSQP.Model}, x_init::Vector;
         x_next, u_curr = solve_QP!(ctrl, x_next)
         x_hist = vcat(x_hist, [x_next])
         u_hist = vcat(u_hist, [u_curr])
+        x_ref_hist = vcat(x_ref_hist, [ctrl.Xref[2]])
 
         !verbose || println("u_curr = " , u_curr)
-        !verbose || println("Uref[1] = " , ctrl.Uref[1])
-        !verbose || println("x_curr = " , x_next)
-        !verbose || println("Xref[2] = " , ctrl.Xref[2])
+        #!verbose || println("Uref[1] = " , ctrl.Uref[1])
+        !verbose || println("x_next = " , x_next)
+        # !verbose || println("Xref[2] = " , ctrl.Xref[2])
         !verbose || println("############################")
 
         all(x_next[1:3].+1 .≈ 1.) && println("\nDone!") && break
     end
 
-    return x_hist, u_hist
+    return x_hist, u_hist, x_ref_hist
 end;
 
 

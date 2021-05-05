@@ -39,7 +39,7 @@ function dynamics(x::SVector{19}, u::SVector{6})::SVector{19}
     # Chaser wrt Target
     ṗ_tc = v_tc
     v̇_tc = ([3*(μ^2)*p_tc[1] + 2*μ*v_tc[2]; -2*μ*v_tc[1]; -(μ^2)*p_tc[3]] +
-            R_tc * 𝑓_c)
+            𝑓_c) # R_tc * 𝑓_c
     # Chaser wrt Inertial
     ω̇_sc = J_c \ (𝜏_c - ω_sc × (J_c * ω_sc))
     q̇_sc = 0.5 * lmult(q_sc) * hmat() * ω_sc
