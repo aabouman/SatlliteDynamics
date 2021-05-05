@@ -1,7 +1,7 @@
 # %%
 using LinearAlgebra: normalize, norm, ×, I
 using Rotations: lmult, hmat, RotMatrix, UnitQuaternion, RotationError
-using Rotations: CayleyMap, add_error, rotation_error, params, RotXYZ
+using Rotations: CayleyMap, add_error, rotation_error, params, RotXYZ, ∇differential
 using ForwardDiff
 using StaticArrays
 
@@ -106,19 +106,11 @@ function state_error_inv(xref, dx)
     return vcat(p_new, q_new, v_new, w_new, q2_new, w2_new)
 end
 
-function attitude_jacobian(q)
-    q̂ = [ 0    -q[4]  q[3];
-          q[4]  0    -q[2];
-         -q[3]  q[2]  0]
-    return SMatrix{4,3}(vcat(-q[2:end]', q[1] * I(3) + q̂))
-end
-
-
 function state_error_jacobian(x)
     ip, iq, iv, iw, iq2, iw2 = 1:3, 4:7, 8:10, 11:13, 14:16, 17:19
     q = x[iq]
     M = blockdiag(sparse(I(3)),
-                  sparse(attitude_jacobian(q)),
+                  sparse(∇differential(UnitQuaternion(q))),
                   sparse(I(12)))
     return Matrix(M)
 end

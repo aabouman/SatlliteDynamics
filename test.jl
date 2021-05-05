@@ -16,7 +16,9 @@ include("MPC.jl");
 x_init = [-.1, 0, 0, 1., 0, 0, 0, 10., 0., 0, 0, 0, 0,
           0, 0, 0, 0, 0, 2*π/2]
 x_hist, u_hist = simulate(ctrl, x_init; num_steps=100, verbose=true)
-
+# %%
+μ = sqrt(G * mₛ / (earthRadius^3))
+(μ^2)*3
 # %%
 using Plots
 plot([x_hist[i][1] for i in 1:length(x_hist)])
@@ -62,4 +64,31 @@ x_hist[end] - rollout(xₛₜ_init, temp, δt)[end]
 [x_hist[] for i in 1:length(x_hist)]
 
 # %%
-u_hist
+q = normalize(rand(4))
+
+# %%
+attitude_jacobian(q)
+
+# %%
+Rotations.lmult(UnitQuaternion(q)) * hmat()
+
+# %%
+Rotations.∇differential(UnitQuaternion(q))
+
+# %%
+ForwardDiff.jacobian(x->(1/sqrt(1+norm(x)^2) * vcat([1], x)), [1,2,3])
+
+# %%
+ForwardDiff.jacobian(x->(x[2:4] ./ x[1]), q)
+
+# %%
+Rotations.∇differential(UnitQuaternion(q))
+
+# %%
+ForwardDiff.jacobian(q->params(RodriguesParam(UnitQuaternion(q))), q)
+
+# %%
+ForwardDiff.jacobian(q->params(MRP(UnitQuaternion(q))), q)
+
+# %%
+Rotations.jacobian(MRP, UnitQuaternion(q))
