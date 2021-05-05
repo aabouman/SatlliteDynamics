@@ -77,7 +77,7 @@ should be constant between MPC iterations.
 
 Any keyword arguments will be passed to `initialize_solver!`.
 """
-function buildQP!(ctrl::MPCController{OSQP.Model})
+function buildQP!(ctrl::MPCController{OSQP.Model}, x_start)
     #Build QP matrices for OSQP
     N = length(ctrl.Xref)
     n = length(ctrl.Xref[1])
@@ -99,6 +99,13 @@ function buildQP!(ctrl::MPCController{OSQP.Model})
     B = [discreteJacobian(ctrl.Xref[i], ctrl.Uref[i], ctrl.δt)[2]
          for i in 1:N-1]
 
+     Xeq = zero(ctrl.Xref[1])
+     Ueq = zero(ctrl.Uref[1])
+     A = [discreteJacobian(Xeq, Ueq, ctrl.δt)[1]
+          for i in 1:N-1]
+     B = [discreteJacobian(Xeq, Ueq, ctrl.δt)[2]
+          for i in 1:N-1]
+
     dynConstMat = blockdiag([sparse([B[i]  -I(n)]) for i in 1:(N-1)]...)
     dynConstMat += blockdiag(spzeros(n, m),
                              [sparse([A[i]  zeros(n, m)]) for i in 2:(N-2)]...,
@@ -107,8 +114,8 @@ function buildQP!(ctrl::MPCController{OSQP.Model})
     ctrl.C .= vcat(dynConstMat)
 
     # Compute the equality constraints
-    dynConstlb = vcat(zeros((N-1)*n)) #-A[1] * state_error(X[1], ctrl.Xref[1]),
-    dynConstub = vcat(zeros((N-1)*n)) #-A[1] * state_error(X[1], ctrl.Xref[1]),
+    dynConstlb = vcat(-A[1] * (x_start - Xeq), zeros((N-2)*n)) #-A[1] * state_error(X[1], ctrl.Xref[1]),
+    dynConstub = vcat(-A[1] * (x_start - Xeq), zeros((N-2)*n)) #-A[1] * state_error(X[1], ctrl.Xref[1]),
 
     # Concatenate the dynamics constraints and earth radius constraint bounds
     ctrl.lb .= vcat(dynConstlb)
@@ -184,7 +191,9 @@ function simulate(ctrl::MPCController{OSQP.Model}, x_init::Vector;
         !verbose || println("\tXref[2] = " , ctrl.Xref[2])
 
         #need to build QP each time as P updating
-        buildQP!(ctrl)
+
+        buildQP!(ctrl, x_next)
+
 
         x_next, u_curr = solve_QP!(ctrl, x_next)
         x_hist = vcat(x_hist, [x_next])

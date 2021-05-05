@@ -2,7 +2,7 @@
 include("MPC.jl");
 
 # %%
-N = 100; δt = 0.01;
+N = 10; δt = 0.1;
 
 Q  = Matrix(Diagonal([1.,1,1,1,1,1])) * 1.
 R  = Matrix(Diagonal([1.,1,1])) * .1
@@ -16,8 +16,8 @@ ctrl = OSQPController(Q, R, Qf, δt, N, Np, Nd);
 
 # %%
 include("MPC.jl");
-x_init = [-.1, 0, 0, 10., 0., 0]
-x_hist, u_hist, x_ref_hist = simulate(ctrl, x_init; num_steps=200, verbose=true)
+x_init = [-.1, 0, 0, 0.1, 0., 0]
+x_hist, u_hist = simulate(ctrl, x_init; num_steps=200, verbose=true)
 
 # %%
 using Plots
@@ -33,11 +33,11 @@ plot([x_hist[i][1] for i in 1:length(x_hist)],
      [x_hist[i][2] for i in 1:length(x_hist)])
 
 # %%
-plot!([x_hist[i][9] for i in 1:length(x_hist)])
+plot([x_hist[i][4] for i in 1:length(x_hist)])
 
 
 # %%
-plot!([x_hist[i][9] for i in 1:length(x_hist)])
+plot!([x_hist[i][5] for i in 1:length(x_hist)])
 
 # %%
 plot([u_hist[i][1] for i in 1:length(u_hist)])
