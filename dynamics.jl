@@ -1,6 +1,7 @@
 # %%
 using LinearAlgebra: normalize, norm, ×, I
-using Rotations: lmult, hmat, RotMatrix, UnitQuaternion, RotationError, add_error, rotation_error, params, RotXYZ
+using Rotations: lmult, hmat, RotMatrix, UnitQuaternion, RotationError
+using Rotations: CayleyMap, add_error, rotation_error, params, RotXYZ
 using ForwardDiff
 using StaticArrays
 
@@ -12,23 +13,23 @@ earthRadius = 6.37814;  # Megameters
 n = sqrt(G * mₛ / (earthRadius^3))
 Ω = [0; 0; 2*pi/1.5] #change 24 to solar time or whatever its called
 
-function dynamics(x::Vector, u::Vector)
+function dynamics(x::Vector, u::Vector)::SVector{16}
     xStatic = SVector{length(x)}(x)
     uStatic = SVector{length(u)}(u)
-    dynamics(xStatic, uStatic)
+    return dynamics(xStatic, uStatic)
 end
 
-function dynamics(x::SVector{16}, u::SVector{6})
-    p_tc = @SVector x[1:3]
-    q_sc = normalize(@SVector x[4:7])
-    v_tc = @SVector x[8:10]
-    ω_sc = @SVector x[11:13]
+function dynamics(x::SVector{16}, u::SVector{6})::SVector{16}
+    p_tc = SVector{3}(x[1:3])
+    q_sc = normalize(SVector{4}(x[4:7]))
+    v_tc = SVector{3}(x[8:10])
+    ω_sc = SVector{3}(x[11:13])
 
-    q_st = @SVector x[14:16]  # Use Euler angles (X, Y, Z) for TRN orientation param
-    # @assert q_st[1] ≈ 0 && q_st[2] ≈ 0  # Only rotates about Z
+    q_st = SVector{3}(x[14:16])  # Use Euler angles (X, Y, Z) for TRN orientation param
+    @assert q_st[1] ≈ 0 && q_st[2] ≈ 0  # Only rotates about Z
 
-    𝑓_c = @SVector [u[1], u[2], u[3]]
-    𝜏_c = @SVector [u[4], u[5], u[6]]
+    𝑓_c = SVector{3}(u[1:3])
+    𝜏_c = SVector{3}(u[4:6])
 
     R_tc = RotMatrix(RotXYZ(q_st...))' * RotMatrix(UnitQuaternion(q_sc))
 
@@ -39,8 +40,7 @@ function dynamics(x::SVector{16}, u::SVector{6})
     ω̇_sc = J_c \ (𝜏_c - ω_sc × (J_c * ω_sc))
     q̇_sc = 0.5 * lmult(q_sc) * hmat() * ω_sc
 
-    q̇_st = @SVector zeros(3)
-    q̇_st[3] = Ω[3]
+    q̇_st = SVector{3}(Ω)
 
     return [ṗ_tc; q̇_sc; v̇_tc; ω̇_sc; q̇_st]
 end
