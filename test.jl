@@ -3,32 +3,61 @@ include("MPC.jl");
 
 # %%
 n = 12; m = 6;
-N = 1000; δt = 0.001;
+N = 100; δt = 0.001;
 
-Q = Matrix(Diagonal([1.,1,1,0,0,0,0,1,1,1,0,0,0])) * 10.
-R = Matrix(Diagonal([1.,1,1,1,1,1])) * 1.
-Qf = Matrix(Diagonal([1.,1,1,0,0,0,0,1,1,1,0,0,0])) * 100.
+Q = Matrix(Diagonal([1.,1,1,0,0,0,0,1,1,1,0,0,0])) * 1.
+R = Matrix(Diagonal([1.,1,1,1,1,1])) * .1
+Qf = Matrix(Diagonal([1.,1,1,0,0,0,0,1,1,1,0,0,0])) * 10.
 
 ctrl = OSQPController(Q, R, Qf, δt, N, (N-1)*(n));
 
 # %%
-# xₛc_init = [earthRadius+2, 0, 0, 1., 0, 0, 0, 0, 28.4, 0, 0, 0, 0]
-# xₛₜ_init = [0, earthRadius+1, 0, 1., 0, 0, 0, 28.4, 0, 0, 0, 0, 0]
-xₛc_init = [earthRadius+2, 0, 0, 1., 0, 0, 0, 28.4, 0, 0, 0, 0, 0]
-xₛₜ_init = [earthRadius+2, 0, 0, 1., 0, 0, 0, 28.4, 0, 0, 0, 0, 0]
+xₛc_init = [earthRadius+2, 0, 0, 1., 0, 0, 0, 0, 28.4, 0, 0, 0, 0]
+xₛₜ_init = [earthRadius+1, 0, 0, 0, 0, 1., 0, 0, 28.4, 0, 0, 0, 0]
 
-simulate(ctrl, xₛc_init, xₛₜ_init; num_steps=10000);
+x_hist, u_hist = simulate(ctrl, xₛc_init, xₛₜ_init; num_steps=1000, verbose=false);
 
 # %%
 include("dynamics.jl")
 include("MPC.jl");
 
-x1 = rand(13)
-x1[4:7] = normalize(x1[4:7])
-x2 = rand(13)
-x2[4:7] = normalize(x2[4:7])
-
-dx = state_error(x1, x2)
+TargetSatellite()
 
 # %%
-state_error_inv(x2, state_error(x1, x2)) ≈ x1
+using Plots
+plot([x_hist[i][1] for i in 1:length(x_hist)],
+     [x_hist[i][2] for i in 1:length(x_hist)])
+
+# %%
+plot([x_hist[i][8] for i in 1:length(x_hist)])
+
+
+# %%
+plot([x_hist[i][9] for i in 1:length(x_hist)])
+
+# %%
+plot([u_hist[i][1] for i in 1:length(u_hist)])
+plot!([u_hist[i][2] for i in 1:length(u_hist)])
+plot!([u_hist[i][3] for i in 1:length(u_hist)])
+
+# %%
+plot([u_hist[i][4] for i in 1:length(u_hist)])
+plot!([u_hist[i][5] for i in 1:length(u_hist)])
+plot!([u_hist[i][6] for i in 1:length(u_hist)])
+
+
+# %%
+x_hist[end]
+
+# %%
+temp = [zeros(6) for i in 1:10000]
+rollout(xₛₜ_init, temp, δt)[end]
+
+# %%
+x_hist[end] - rollout(xₛₜ_init, temp, δt)[end]
+
+# %%
+[x_hist[] for i in 1:length(x_hist)]
+
+# %%
+u_hist

@@ -1,7 +1,7 @@
 using OSQP
 using SparseArrays
 using LinearAlgebra
-using Rotations
+using Rotations: UnitQuaternion, params
 
 earthRadius = 6.37814  # Megameters
 
@@ -85,27 +85,29 @@ function buildQP!(ctrl::MPCController{OSQP.Model}, X, U)
     iq = 4:7
     Iq = Diagonal(SA[0,0,0, 1,1,1, 0,0,0, 0,0,0])
 
-    #remember q has u subsumed => q[k] is 19x1 and not 13x1 {u,x}
-    q = [[-ctrl.R * (U[i] - ctrl.Uref[i]); -ctrl.Q * (X[i+1] - ctrl.Xref[i+1])] for i in 1:N-1]
-    q[end][m+1:end] .= -ctrl.Qf * (X[end] - ctrl.Xref[end]) #overwriting the last value
+    q = [[-ctrl.R * ctrl.Uref[i]; -ctrl.Q * ctrl.Xref[i+1]]
+         for i in 1:N-1]
+    q[end][m+1:end] .= -ctrl.Qf * ctrl.Xref[end] # Overwriting the last value
+    qtilde = [blockdiag(sparse(I(m)), sparse(state_error_jacobian(ctrl.Xref[i+1])')) * q[i]
+              for i in 1:N-1]
 
-    Qtilde = [state_error_jacobian(X[i+1])' * ctrl.Q * state_error_jacobian(X[i+1]) - Iq * (q[i][m .+ (iq)]' * X[i+1][iq])
+    # Building the Cost linear term
+    ctrl.q .= vcat(qtilde...)
+
+    Qtilde = [state_error_jacobian(ctrl.Xref[i+1])' * ctrl.Q * state_error_jacobian(ctrl.Xref[i+1]) -
+              Iq * (q[i][m .+ (iq)]' * ctrl.Xref[i+1][iq])
               for i in 1:(N-1)]
-    Qtilde[end] = state_error_jacobian(X[end])' * ctrl.Qf * state_error_jacobian(X[end]) - Iq * (q[end][m .+ (iq)]' * X[end][iq])
-
-    qtilde = [blockdiag(sparse(I(m)), sparse(state_error_jacobian(X[i+1])')) * q[i] for i in 1:N-1]
-
+    Qtilde[end] = state_error_jacobian(ctrl.Xref[end])' * ctrl.Qf * state_error_jacobian(ctrl.Xref[end]) -
+                  Iq * (q[end][m .+ (iq)]' * ctrl.Xref[end][iq])
     # Building the Cost QP
     ctrl.P .= blockdiag([blockdiag(sparse(ctrl.R), sparse(Qtilde[i])) for i=1:N-1]...)
 
-    ctrl.q .= vcat(qtilde...)
-
     # Computing the Dynamics constraints
-    A = [state_error_jacobian(X[i+1])' *
+    A = [state_error_jacobian(ctrl.Xref[i+1])' *
          jacobian(ctrl.Xref[i], ctrl.Uref[i])[1] *
-         state_error_jacobian(X[i]) for i in 1:N-1]
-    B = [(state_error_jacobian(X[i+1])' *
-          jacobian(ctrl.Xref[i], ctrl.Uref[i])[2]) for i in 1:N-1]
+         state_error_jacobian(ctrl.Xref[i]) for i in 1:N-1]
+    B = [state_error_jacobian(ctrl.Xref[i+1])' *
+         jacobian(ctrl.Xref[i], ctrl.Uref[i])[2] for i in 1:N-1]
 
     dynConstMat = blockdiag([sparse([B[i]  -I(n)]) for i in 1:(N-1)]...)
     dynConstMat += blockdiag(spzeros(n, m),
@@ -117,7 +119,6 @@ function buildQP!(ctrl::MPCController{OSQP.Model}, X, U)
 
     # Compute the equality constraints
     dynConstlb = vcat(-A[1] * state_error(X[1], ctrl.Xref[1]), zeros((N-2)*n))
-    println("Dynamic Constraints: ", dynConstlb[1:n])
     dynConstub = vcat(-A[1] * state_error(X[1], ctrl.Xref[1]), zeros((N-2)*n))
 
     # Concatenate the dynamics constraints and earth radius constraint bounds
@@ -157,9 +158,6 @@ function updateRef!(ctrl::MPCController{OSQP.Model}, Xₖ, Uₖ, Xₜₖ, Uₜ�
     n = length(ctrl.Xref[1]) - 1
     m = length(ctrl.Uref[1])
 
-    # pₛₜᵗ, qₛₜ, vₛₜᵗ, wₛₜ = Xₜₖ[end][1:3], Xₜₖ[end][4:7], Xₜₖ[end][8:10], Xₜₖ[end][11:13]
-    # UnitQuaternion()
-
     ctrl.Xref .= stateInterpolate(Xₖ[1], Xₜₖ[end], N)
     ctrl.Uref .= [zeros(m) for _ in N-1] # Uₖ
 
@@ -177,11 +175,7 @@ function solve_QP!(ctrl::MPCController{OSQP.Model}, Xₖ, Xₜₖ, Uₜₖ)
     Uₖ₊₁ = ctrl.Uref + ΔU
 
     Xₖ₊₁ = [state_error_inv(ctrl.Xref[i+1], results.x[(n+m)*(i-1) .+ (m+1:m+n)]) for i=1:N-1]
-    # Xₖ₊₁ = ctrl.Xref[2:end] + ΔX
     Xₖ₊₁ = vcat(Xₖ₊₁, [discreteDynamics(Xₖ₊₁[end], Uₖ₊₁[end], ctrl.δt)])
-
-    # println("ΔX = " , ΔX[1])
-    # println("ΔU = " , ΔU[1])
 
     Xₜₖ₊₁ = rollout(Xₜₖ[2], Uₜₖ, ctrl.δt)
     Uₜₖ₊₁ = Uₜₖ
@@ -189,50 +183,62 @@ function solve_QP!(ctrl::MPCController{OSQP.Model}, Xₖ, Xₜₖ, Uₜₖ)
     return Xₖ₊₁, Uₖ₊₁, Xₜₖ₊₁, Uₜₖ₊₁
 end
 
+
+
 """
 controller function is called as controller(x), where x is a state vector
 (length 13)
 """
 function simulate(ctrl::MPCController{OSQP.Model}, xₛc_init::Vector, xₛₜ_init::Vector;
-                  num_steps=1000)
+                  num_steps=1000, verbose=false)
     N = length(ctrl.Xref)
     n = length(ctrl.Xref[1])
     m = length(ctrl.Uref[1])
 
     num_steps ≥ N || error("Number of steps being simulated must be ≥ the controller time horizon")
 
-    Uₖ = [zeros(m) for _ in 1:N-1]
+    Uₖ = [rand(m) for _ in 1:N-1]
     Uₜₖ = [zeros(m) for _ in 1:N-1]
     Xₜₖ = rollout(xₛₜ_init, Uₜₖ, ctrl.δt)
     Xₖ = stateInterpolate(xₛc_init, Xₜₖ[end], N)
 
-    x_hist = [zeros(n) for _ in 1:num_steps+1]
-    u_hist = [zeros(n) for _ in 1:num_steps]
+    x_hist = []
+    u_hist = []
 
-    x_hist[1] = xₛc_init
+    x_hist = vcat(x_hist, [xₛc_init])
 
     for i in 1:num_steps
-        println("step = " , i)
+        !verbose && print("step = $i\r")
 
         updateRef!(ctrl, Xₖ, Uₖ, Xₜₖ, Uₜₖ)
 
-        println("Xₖ[1] = " , Xₖ[1])
-        println("Xref[1] = " , ctrl.Xref[1])
-        println("Xₖ[2] = " , Xₖ[2])
-        println("Xref[2] = " , ctrl.Xref[2])
-        println("Xₖ[end] = " , Xₖ[end])
-        println("Xref[end] = " , ctrl.Xref[end])
+        !verbose || println("Xₖ[1] = " , Xₖ[1])
+        !verbose || println("Xref[1] = " , ctrl.Xref[1])
+        !verbose || println("Xₖ[2] = " , Xₖ[2])
+        !verbose || println("Xref[2] = " , ctrl.Xref[2])
+        !verbose || println("Xₖ[end] = " , Xₖ[end])
+        !verbose || println("Xref[end] = " , ctrl.Xref[end])
+        !verbose || println("Uₖ[1] = " , Uₖ[1])
+        !verbose || println("Uref[1] = " , ctrl.Uref[1])
 
         buildQP!(ctrl, Xₖ, Uₖ)
 
         Xₖ, Uₖ, Xₜₖ, Uₜₖ = solve_QP!(ctrl, Xₖ, Xₜₖ, Uₜₖ)
 
-        x_hist[i+1] = Xₖ[1]
-        u_hist[i] = Uₖ[1]
+        x_hist = vcat(x_hist, [Xₖ[1]])
+        u_hist = vcat(u_hist, [Uₖ[1]])
 
-        println("QP solution x: " , Xₖ[1])
-        println("QP solution u: " , Uₖ[1])
-        println("############################")
+        if Xₖ[end] ≈ Xₜₖ[end]
+            x_hist = vcat(x_hist, Xₖ[2:end])
+            u_hist = vcat(u_hist, Uₖ[2:end])
+
+            println("\nDone!")
+            break
+        end
+
+        !verbose || println("QP solution x: " , Xₖ[1])
+        !verbose || println("QP solution u: " , Uₖ[1])
+        !verbose || println("############################")
     end
 
     return x_hist, u_hist
@@ -252,26 +258,25 @@ function slerp(qa::UnitQuaternion, qb::UnitQuaternion, N::Int64)
         else
             qm = qb
         end
-        abs(coshalftheta) >= 1.0 && return Rotations.params(qa)
+        abs(coshalftheta) >= 1.0 && return params(qa)
 
         halftheta    = acos(coshalftheta)
         sinhalftheta = sqrt(one(T) - coshalftheta * coshalftheta)
 
         if abs(sinhalftheta) < 0.001
-            return Rotations.params(UnitQuaternion(T(0.5) * (qa.w + qb.w),
-                                                   T(0.5) * (qa.x + qb.x),
-                                                   T(0.5) * (qa.y + qb.y),
-                                                   T(0.5) * (qa.z + qb.z)))
+            return params(UnitQuaternion(T(0.5) * (qa.w + qb.w),
+                          T(0.5) * (qa.x + qb.x),
+                          T(0.5) * (qa.y + qb.y),
+                          T(0.5) * (qa.z + qb.z)))
         end
 
         ratio_a = sin((one(T) - t) * halftheta) / sinhalftheta
         ratio_b = sin(t * halftheta) / sinhalftheta
 
-        temp = Rotations.params(UnitQuaternion(qa.w * ratio_a + qm.w * ratio_b,
-                                               qa.x * ratio_a + qm.x * ratio_b,
-                                               qa.y * ratio_a + qm.y * ratio_b,
-                                               qa.z * ratio_a + qm.z * ratio_b)
-                                )
+        temp = params(UnitQuaternion(qa.w * ratio_a + qm.w * ratio_b,
+                                     qa.x * ratio_a + qm.x * ratio_b,
+                                     qa.y * ratio_a + qm.y * ratio_b,
+                                     qa.z * ratio_a + qm.z * ratio_b))
         return temp
     end
 
