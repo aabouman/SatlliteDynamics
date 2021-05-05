@@ -68,6 +68,13 @@ function OSQPController(Q::Matrix, R::Matrix, Qf::Matrix, δt::Real, N::Integer,
     MPCController{OSQP.Model}(P, q, C, lb, ub, N, solver, Xref, Uref, Q, R, Qf, δt)
 end
 
+function cost(ctrl::MPCController{OSQP.Model}, x_next)
+
+    J1 = ctrl.Q[1].*min(1+ x_next[1:4]'*x_next[8:11])
+    J2 = (x_next[5:7] - x_next[12:14])'*ctrl.Q[5:7]*(x_next[5:7] - x_next[12:14])
+
+    return J1 + J2
+end
 
 """
     buildQP!(ctrl, A, B, Q, R, Qf; kwargs...)
@@ -77,7 +84,7 @@ should be constant between MPC iterations.
 
 Any keyword arguments will be passed to `initialize_solver!`.
 """
-function buildQP!(ctrl::MPCController{OSQP.Model})
+function buildQP!(ctrl::MPCController{OSQP.Model}, X)
     #Build QP matrices for OSQP
     N = length(ctrl.Xref)
     n = length(ctrl.Xref[1]) - 1  #remember n = 18 not 19
@@ -96,10 +103,10 @@ function buildQP!(ctrl::MPCController{OSQP.Model})
     ctrl.q .= vcat(qtilde...)
 
     Qtilde = [state_error_jacobian(ctrl.Xref[i+1])' * ctrl.Q * state_error_jacobian(ctrl.Xref[i+1]) -
-              Iq * (q[i][m .+ (iq)]' * ctrl.Xref[i+1][iq])
+              Iq * (X[i][iq]' * ctrl.Xref[i+1][iq]) #q[i][m .+ (iq)]
               for i in 1:(N-1)]
     Qtilde[end] = state_error_jacobian(ctrl.Xref[end])' * ctrl.Qf * state_error_jacobian(ctrl.Xref[end]) -
-                  Iq * (q[end][m .+ (iq)]' * ctrl.Xref[end][iq])
+                  Iq * (X[end][iq]' * ctrl.Xref[end][iq])
     # Building the Cost QP
     ctrl.P .= blockdiag([blockdiag(sparse(ctrl.R), sparse(Qtilde[i])) for i=1:N-1]...)
 
@@ -153,13 +160,16 @@ function solve_QP!(ctrl::MPCController{OSQP.Model}, x_start::Vector)#Xₖ::Vecto
     ΔU = [results.x[(n+m)*(i-1) .+ (1:m)] for i=1:N-1]
     Uₖ₊₁ = ctrl.Uref + ΔU
 
-    Xₖ₊₁ = [state_error_inv(ctrl.Xref[i+1], results.x[(n+m)*(i-1) .+ (m+1:m+n)])
-            for i=1:N-1]
+    # Xₖ₊₁ = [state_error_inv(ctrl.Xref[i+1], results.x[(n+m)*(i-1) .+ (m+1:m+n)])
+    #         for i=1:N-1]
 
     u_curr = Uₖ₊₁[1]  # Recover u₁
+
     x_next = Vector(discreteDynamics(x_start, u_curr, ctrl.δt))
 
-    return x_next, u_curr
+    X = rollout(x_start, Uₖ₊₁, ctrl.δt)
+
+    return x_next, u_curr, X
 end
 
 
@@ -180,7 +190,9 @@ function simulate(ctrl::MPCController{OSQP.Model}, x_init::Vector;
     x_next = x_init
     u_curr = zeros(m)
 
-    x_hist = []; u_hist = []
+    X = [x_init for _ in 1:N]
+
+    x_hist = []; u_hist = []; cost_hist = []
 
     x_hist = vcat(x_hist, [x_next])
 
@@ -194,15 +206,17 @@ function simulate(ctrl::MPCController{OSQP.Model}, x_init::Vector;
         !verbose || println("\tXref[2] = " , ctrl.Xref[2])
 
         #need to build QP each time as P updating
-        buildQP!(ctrl)
+        buildQP!(ctrl, X)
 
-        x_next, u_curr = solve_QP!(ctrl, x_next)
+        x_next, u_curr, X = solve_QP!(ctrl, x_next)
         x_hist = vcat(x_hist, [x_next])
         u_hist = vcat(u_hist, [u_curr])
 
         !verbose || println("\tu_curr = " , u_curr)
+        !verbose || println("COST = " , cost(ctrl, x_next))
         !verbose || println("############################")
 
+        cost_hist = vcat(cost_hist, cost(ctrl, x_next))
         # all(x_next[1:3].+1 .≈ 1.) && println("\nDone!") && break
     end
 
