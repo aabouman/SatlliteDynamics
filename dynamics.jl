@@ -13,46 +13,46 @@ earthRadius = 6.37814;  # Megameters
 μ = sqrt(G * mₛ / (earthRadius^3))
 
 
-function dynamics(x::Vector, u::Vector)::SVector{19}
+function dynamics(x::Vector, u::Vector)::SVector{6}
     xStatic = SVector{length(x)}(x)
     uStatic = SVector{length(u)}(u)
     return dynamics(xStatic, uStatic)
 end
 
 
-function dynamics(x::SVector{19}, u::SVector{6})::SVector{19}
+function dynamics(x::SVector{6}, u::SVector{3})::SVector{6}
     p_tc = SVector{3}(x[1:3])
-    q_sc = normalize(SVector{4}(x[4:7]))
+    # q_sc = normalize(SVector{4}(x[4:7]))
     v_tc = SVector{3}(x[8:10])
-    ω_sc = SVector{3}(x[11:13])
+    # ω_sc = SVector{3}(x[11:13])
 
-    q_st = SVector{3}(x[14:16])  # Use Euler angles (X, Y, Z) for TRN orientation param
-    @assert q_st[1] ≈ 0 && q_st[2] ≈ 0  # Only rotates about Z
-    ω_st = SVector{3}(x[17:19])
-    @assert q_st[1] ≈ 0 && q_st[2] ≈ 0  # Only rotates about Z
+    #q_st = SVector{3}(x[14:16])  # Use Euler angles (X, Y, Z) for TRN orientation param
+    #@assert q_st[1] ≈ 0 && q_st[2] ≈ 0  # Only rotates about Z
+    #ω_st = SVector{3}(x[17:19])
+    #@assert q_st[1] ≈ 0 && q_st[2] ≈ 0  # Only rotates about Z
 
     𝑓_c = SVector{3}(u[1:3])
-    𝜏_c = SVector{3}(u[4:6])
+    #𝜏_c = SVector{3}(u[4:6])
 
-    R_tc = RotMatrix(RotXYZ(q_st...))' * RotMatrix(UnitQuaternion(q_sc))
+    #R_tc = RotMatrix(RotXYZ(q_st...))' * RotMatrix(UnitQuaternion(q_sc))
 
     # Chaser wrt Target
     ṗ_tc = v_tc
     v̇_tc = ([3*(μ^2)*p_tc[1] + 2*μ*v_tc[2]; -2*μ*v_tc[1]; -(μ^2)*p_tc[3]] +
             𝑓_c) # R_tc * 𝑓_c
     # Chaser wrt Inertial
-    ω̇_sc = J_c \ (𝜏_c - ω_sc × (J_c * ω_sc))
-    q̇_sc = 0.5 * lmult(q_sc) * hmat() * ω_sc
+    #ω̇_sc = J_c \ (𝜏_c - ω_sc × (J_c * ω_sc))
+    #q̇_sc = 0.5 * lmult(q_sc) * hmat() * ω_sc
     # Target wrt Inertial
-    ω̇_st = SVector{3}(zeros(3))    # Constant velocity
-    q̇_st = ω_st
+    #ω̇_st = SVector{3}(zeros(3))    # Constant velocity
+    #q̇_st = ω_st
 
-    return [ṗ_tc; q̇_sc; v̇_tc; ω̇_sc; q̇_st; ω̇_st]
+    return [ṗ_tc; v̇_tc] #[ṗ_tc; q̇_sc; v̇_tc; ω̇_sc; q̇_st; ω̇_st]
 end
 
 function jacobian(x::Vector, u::Vector)
-    A = ForwardDiff.jacobian(x_temp->dynamics(x_temp, u), x)
-    B = ForwardDiff.jacobian(u_temp->dynamics(x, u_temp), u)
+    A = ForwardDiff.jacobian(x_temp->discreteDynamics(x_temp, u, δt), x)
+    B = ForwardDiff.jacobian(u_temp->discreteDynamics(x, u_temp, δt), u)
     return (A, B)
 end
 
