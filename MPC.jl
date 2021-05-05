@@ -110,12 +110,6 @@ function buildQP!(ctrl::MPCController{OSQP.Model})
     B = [state_error_jacobian(ctrl.Xref[i+1])' *
          jacobian(ctrl.Xref[i], ctrl.Uref[i])[2] for i in 1:N-1]
 
-    println("A = ")
-    display(A[1])
-    println("################")
-    println("B = ")
-    display(B[1])
-    println("^^^^^^^^^^^^^^^^^^")
     dynConstMat = blockdiag([sparse([B[i]  -I(n)]) for i in 1:(N-1)]...)
     dynConstMat += blockdiag(spzeros(n, m),
                              [sparse([A[i]  zeros(n, m)]) for i in 2:(N-2)]...,
@@ -187,7 +181,10 @@ function solve_QP!(ctrl::MPCController{OSQP.Model}, x_start::Vector)#Xₖ::Vecto
     @assert(all([norm(Xₖ₊₁[i][4:7]) for i in 1:N-1] .≈ 1.))
 
     u_curr = Uₖ₊₁[1]  # Recover u₁
-    x_next = Xₖ₊₁[1]  # Recover x₂
+    x_next = Vector(discreteDynamics(x_start, u_curr, ctrl.δt))
+
+    return x_next, u_curr
+    # x_next = Xₖ₊₁[1]  # Recover x₂
 
     # Verify dynamics constraints are held
     @assert(all((ctrl.C * results.x .+ 1) .≈ 1.), (ctrl.C * results.x)[1:m+n])
@@ -218,18 +215,16 @@ function simulate(ctrl::MPCController{OSQP.Model}, x_init::Vector;
     num_steps ≥ N || error("Number of steps being simulated must be ≥ the controller time horizon")
 
     #initialize trajectory
-    Xₖ = [x_init for _ in 1:N]
-
-    x_hist = []
-    u_hist = []
-
-    x_hist = vcat(x_hist, [x_init])
-
     x_next = x_init
-    for i in 1:2 #num_steps
+
+    x_hist = []; u_hist = []
+
+    x_hist = vcat(x_hist, [x_next])
+
+    for i in 1:num_steps
         !verbose && print("step = $i\r")
 
-        updateRef!(ctrl, Xₖ[1])
+        updateRef!(ctrl, x_next)
 
         !verbose || println("step = " , i)
         # !verbose || println("Xₖ[1] = " , Xₖ[1])
@@ -242,25 +237,17 @@ function simulate(ctrl::MPCController{OSQP.Model}, x_init::Vector;
         #need to build QP each time as P updating
         buildQP!(ctrl)
 
-        #Xₖ, Uₖ = solve_QP!(ctrl, x_next) #solve_QP!(ctrl, Xₖ)
-        x_next, Uₖ = solve_QP!(ctrl, x_next)
-        !verbose || println("Uₖ[1] = " , Uₖ[1])
-        !verbose || println("Uref[1] = " , ctrl.Uref[1])
-
+        x_next, u_curr = solve_QP!(ctrl, x_next)
         x_hist = vcat(x_hist, [x_next])
-        u_hist = vcat(u_hist, [Uₖ[1]])
+        u_hist = vcat(u_hist, [u_curr])
 
-        if all(x_next[1:3].+1 .≈ 1.)   #all(Xₖ[end][1:3] .≈ 0)
-            #x_hist = vcat(x_hist, Xₖ[2:end])
-            #u_hist = vcat(u_hist, Uₖ[2:end])
-
-            println("\nDone!")
-            break
-        end
-
-        !verbose || println("QP solution x: " , x_next)
-        !verbose || println("QP solution u: " , Uₖ[1])
+        !verbose || println("u_curr = " , u_curr)
+        !verbose || println("Uref[1] = " , ctrl.Uref[1])
+        !verbose || println("x_curr = " , x_next)
+        !verbose || println("Xref[2] = " , ctrl.Xref[2])
         !verbose || println("############################")
+
+        all(x_next[1:3].+1 .≈ 1.) && println("\nDone!") && break
     end
 
     return x_hist, u_hist
