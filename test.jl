@@ -11,7 +11,10 @@ Qf = Matrix(Diagonal([1.,1,1,0,0,0,0,1,1,1,0,0,0])) * 10.
 ctrl = OSQPController(Q, R, Qf, δt, N, (N-1)*(n));
 
 # %%
-jacobian(rand(16))
+ForwardDiff.jacobian(x->normalize(x), @SArray [1,2,3,4])
+
+# %%
+jacobian(rand(13), rand(6))
 
 # %%
 x_init = [earthRadius+2, 0, 0, 1., 0, 0, 0, 0, 28.4, 0, 0, 0, 0,

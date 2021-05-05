@@ -46,7 +46,7 @@ function dynamics(x::SVector{16}, u::SVector{6})
 end
 
 function jacobian(x::Vector, u::Vector)
-    x_new = Vector(vcat(x, zeros(3)))
+    x_new = vcat(x, zeros(3))
 
     A = ForwardDiff.jacobian(x_temp->dynamics(x_temp, u), x_new)[1:end-3, 1:end-3]
     B = ForwardDiff.jacobian(u_temp->dynamics(x_new, u_temp), u)[1:end-3, 1:end]
