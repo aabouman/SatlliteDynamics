@@ -1,23 +1,32 @@
 include("MPC.jl");
 
 # %%
-n = 12; m = 6;
+n = 18; m = 6;
 N = 100; δt = 0.001;
 
-Q = Matrix(Diagonal([1.,1,1,0,0,0,0,1,1,1,0,0,0])) * 1.
-R = Matrix(Diagonal([1.,1,1,1,1,1])) * .1
-Qf = Matrix(Diagonal([1.,1,1,0,0,0,0,1,1,1,0,0,0])) * 10.
+Q  = Matrix(Diagonal([1.,1,1,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0])) * 1.
+R  = Matrix(Diagonal([1.,1,1,1,1,1])) * .1
+Qf = Matrix(Diagonal([1.,1,1,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0])) * 10.
 
 ctrl = OSQPController(Q, R, Qf, δt, N, (N-1)*(n));
 
 # %%
-x_init = [earthRadius+2, 0, 0, 1., 0, 0, 0, 0, 28.4, 0, 0, 0, 0,
-          0, 0, 0]
+include("MPC.jl");
 
-x_hist, u_hist = simulate(ctrl, x_init; num_steps=1000, verbose=false);
+x_init = [-.1, 0, 0, 1., 0, 0, 0, 10., 0., 0, 0, 0, 0,
+          0, 0, 0, 0, 0, 2*π/2]
+x_hist, u_hist = simulate(ctrl, x_init; num_steps=100, verbose=true)
 
 # %%
 using Plots
+plot([x_hist[i][1] for i in 1:length(x_hist)])
+# %%
+
+
+# %%
+plot([x_hist[i][2] for i in 1:length(x_hist)])
+
+# %%
 plot([x_hist[i][1] for i in 1:length(x_hist)],
      [x_hist[i][2] for i in 1:length(x_hist)])
 

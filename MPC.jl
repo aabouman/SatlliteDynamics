@@ -50,7 +50,6 @@ horizon length.
 """
 function OSQPController(Q::Matrix, R::Matrix, Qf::Matrix, δt::Real, N::Integer, Nd::Integer)
     n = size(Q)[1]
-
     m = size(R)[2]
     Np = (N-1)*(n-1+m)   # number of primals
 
@@ -81,11 +80,11 @@ Any keyword arguments will be passed to `initialize_solver!`.
 function buildQP!(ctrl::MPCController{OSQP.Model})
     #Build QP matrices for OSQP
     N = length(ctrl.Xref)
-    n = length(ctrl.Xref[1]) - 1  #remember n = 12 not 13
+    n = length(ctrl.Xref[1]) - 1  #remember n = 18 not 19
     m = length(ctrl.Uref[1])
 
     iq = 4:7
-    Iq = Diagonal(SA[0,0,0, 1,1,1, 0,0,0, 0,0,0])
+    Iq = Diagonal(SA[0,0,0, 1,1,1, 0,0,0, 0,0,0, 0,0,0, 0,0,0])
 
     q = [[-ctrl.R * ctrl.Uref[i]; -ctrl.Q * ctrl.Xref[i+1]]
          for i in 1:N-1]
@@ -111,6 +110,12 @@ function buildQP!(ctrl::MPCController{OSQP.Model})
     B = [state_error_jacobian(ctrl.Xref[i+1])' *
          jacobian(ctrl.Xref[i], ctrl.Uref[i])[2] for i in 1:N-1]
 
+    println("A = ")
+    display(A[1])
+    println("################")
+    println("B = ")
+    display(B[1])
+    println("^^^^^^^^^^^^^^^^^^")
     dynConstMat = blockdiag([sparse([B[i]  -I(n)]) for i in 1:(N-1)]...)
     dynConstMat += blockdiag(spzeros(n, m),
                              [sparse([A[i]  zeros(n, m)]) for i in 2:(N-2)]...,
@@ -133,61 +138,40 @@ function buildQP!(ctrl::MPCController{OSQP.Model})
     return nothing
 end
 
-"""
-    find the reference trajectory using
-    initial chaser position and
-    final target position
-"""
-function stateInterpolate(x_init, x_final, N)
+function stateInterpolate_CW(ctrl::MPCController{OSQP.Model}, x_init::Vector, N::Real)
     # initial
     p1, q1, v1, w1 = x_init[1:3], x_init[4:7], x_init[8:10], x_init[11:13]
     # final
-    p2, q2, v2, w2 = x_final[1:3], x_final[4:7], x_final[8:10], x_final[11:13]
-    # quaternion
-    ps = range(p1, p2, length=N)
-    qs = slerp(UnitQuaternion(q1), UnitQuaternion(q2), N)
-    vs = range(v1, v2, length=N)
-    ws = range(w1, w2, length=N)
-
-    # Concatenate
-    xref = vcat(hcat(ps...), hcat(qs...), hcat(vs...), hcat(ws...))
-
-    return [xref[:,i] for i in 1:N]
-end
-
-function stateInterpolate_CW(x_init::Vector, final_euler::Vector, N::Real)
-    # initial
-    p1, q1, v1, w1 = x_init[1:3], x_init[4:7], x_init[8:10], x_init[11:13]
-    # final
-    q2 = params(UnitQuaternion(RotXYZ(final_euler...)))
-    w2 = Ω
+    q2, w2 = x_init[14:16], x_init[17:19]
+    q2_final = q2 + w2 * ctrl.δt * (N-1)
+    quat_final = UnitQuaternion(RotXYZ(q2_final...))
 
     # quaternion
     ps = range(p1, zeros(3), length=N)
-    qs = slerp(UnitQuaternion(q1), UnitQuaternion(q2), N)
+    qs = slerp(UnitQuaternion(q1), quat_final, N)
     vs = range(v1, zeros(3), length=N)
     ws = range(w1, w2, length=N)
+    q2s = range(q2, q2_final, length=N)
+    w2s = fill(w2, N)
 
     # Concatenate
-    xref = vcat(hcat(ps...), hcat(qs...), hcat(vs...), hcat(ws...))
+    xref = vcat(hcat(ps...), hcat(qs...), hcat(vs...), hcat(ws...), hcat(q2s...), hcat(w2s...))
 
     return [xref[:,i] for i in 1:N]
 end
 
-function updateRef!(ctrl::MPCController{OSQP.Model}, Xₖ::Vector, Uₖ::Vector)
+function updateRef!(ctrl::MPCController{OSQP.Model}, x_init)
     N = length(ctrl.Xref)
     n = length(ctrl.Xref[1]) - 1
     m = length(ctrl.Uref[1])
 
-    final_euler = (Xₖ[end][end-2:end] + Ω * ctrl.δt)
-
-    ctrl.Xref .= stateInterpolate_CW(Xₖ[2], final_euler, N)
+    ctrl.Xref .= stateInterpolate_CW(ctrl, x_init, N)
     ctrl.Uref .= [zeros(m) for _ in N-1] # Uₖ
 
     return nothing
 end
 
-function solve_QP!(ctrl::MPCController{OSQP.Model}, Xₖ::Vector)
+function solve_QP!(ctrl::MPCController{OSQP.Model}, x_start::Vector)#Xₖ::Vector)
     N = length(ctrl.Xref)
     n = length(ctrl.Xref[1]) - 1 #remember n = 12 not 13 as dealing with errors
     m = length(ctrl.Uref[1])
@@ -199,9 +183,24 @@ function solve_QP!(ctrl::MPCController{OSQP.Model}, Xₖ::Vector)
 
     Xₖ₊₁ = [state_error_inv(ctrl.Xref[i+1], results.x[(n+m)*(i-1) .+ (m+1:m+n)])
             for i=1:N-1]
-    Xₖ₊₁ = vcat(Xₖ₊₁, [discreteDynamics(Xₖ₊₁[end], Uₖ₊₁[end], ctrl.δt)])
+    # Check that the state_error/state_error_inv holds quaternion constraint
+    @assert(all([norm(Xₖ₊₁[i][4:7]) for i in 1:N-1] .≈ 1.))
 
-    return Xₖ₊₁, Uₖ₊₁
+    u_curr = Uₖ₊₁[1]  # Recover u₁
+    x_next = Xₖ₊₁[1]  # Recover x₂
+
+    # Verify dynamics constraints are held
+    @assert(all((ctrl.C * results.x .+ 1) .≈ 1.), (ctrl.C * results.x)[1:m+n])
+
+    @assert(ctrl.Xref[1] == x_start)  # Check that the refrence and current traj start at same location
+    @assert(x_next ≈ discreteDynamics(x_start, u_curr, ctrl.δt),
+            """Solver computed:
+            x₁ = $(x_start)
+            u₁ = $(u_curr)
+            x₂ = $(x_next)
+            f(x₁,u₁) = $(discreteDynamics(x_start, u_curr, ctrl.δt))""")  # Check dynamics constraints
+
+    return x_next, u_curr
 end
 
 
@@ -218,52 +217,48 @@ function simulate(ctrl::MPCController{OSQP.Model}, x_init::Vector;
 
     num_steps ≥ N || error("Number of steps being simulated must be ≥ the controller time horizon")
 
-    #make initial
-    U0 = [rand(m) for _ in 1:N-1]
-    X0 = [x_init for _ in 1:N]
-
-    # use updateRef to get reference before starting loop
-    # updated in function
-    updateRef!(ctrl, X0, U0)
-
-    Xₖ = X0
-    Uₖ = U0
+    #initialize trajectory
+    Xₖ = [x_init for _ in 1:N]
 
     x_hist = []
     u_hist = []
 
     x_hist = vcat(x_hist, [x_init])
 
-    for i in 1:num_steps
+    x_next = x_init
+    for i in 1:2 #num_steps
         !verbose && print("step = $i\r")
 
-        updateRef!(ctrl, Xₖ, Uₖ)
+        updateRef!(ctrl, Xₖ[1])
 
-        !verbose || println("Xₖ[1] = " , Xₖ[1])
-        !verbose || println("Xref[1] = " , ctrl.Xref[1])
-        !verbose || println("Xₖ[2] = " , Xₖ[2])
-        !verbose || println("Xref[2] = " , ctrl.Xref[2])
-        !verbose || println("Xₖ[end] = " , Xₖ[end])
-        !verbose || println("Xref[end] = " , ctrl.Xref[end])
+        !verbose || println("step = " , i)
+        # !verbose || println("Xₖ[1] = " , Xₖ[1])
+        # !verbose || println("Xref[1] = " , ctrl.Xref[1])
+        # !verbose || println("Xₖ[2] = " , Xₖ[2])
+        # !verbose || println("Xref[2] = " , ctrl.Xref[2])
+        # !verbose || println("Xₖ[end] = " , Xₖ[end])
+        # !verbose || println("Xref[end] = " , ctrl.Xref[end])
+
+        #need to build QP each time as P updating
+        buildQP!(ctrl)
+
+        #Xₖ, Uₖ = solve_QP!(ctrl, x_next) #solve_QP!(ctrl, Xₖ)
+        x_next, Uₖ = solve_QP!(ctrl, x_next)
         !verbose || println("Uₖ[1] = " , Uₖ[1])
         !verbose || println("Uref[1] = " , ctrl.Uref[1])
 
-        buildQP!(ctrl)
-
-        Xₖ, Uₖ = solve_QP!(ctrl, Xₖ)
-
-        x_hist = vcat(x_hist, [Xₖ[1]])
+        x_hist = vcat(x_hist, [x_next])
         u_hist = vcat(u_hist, [Uₖ[1]])
 
-        if Xₖ[end] ≈ Xₜₖ[end]
-            x_hist = vcat(x_hist, Xₖ[2:end])
-            u_hist = vcat(u_hist, Uₖ[2:end])
+        if all(x_next[1:3].+1 .≈ 1.)   #all(Xₖ[end][1:3] .≈ 0)
+            #x_hist = vcat(x_hist, Xₖ[2:end])
+            #u_hist = vcat(u_hist, Uₖ[2:end])
 
             println("\nDone!")
             break
         end
 
-        !verbose || println("QP solution x: " , Xₖ[1])
+        !verbose || println("QP solution x: " , x_next)
         !verbose || println("QP solution u: " , Uₖ[1])
         !verbose || println("############################")
     end
