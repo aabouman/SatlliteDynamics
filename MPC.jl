@@ -70,9 +70,11 @@ end
 
 function cost(ctrl::MPCController{OSQP.Model}, x_next)
 
-    J1 = ctrl.Q[1].*min(1+ x_next[1:4]'*x_next[8:11])
-    J2 = (x_next[5:7] - x_next[12:14])'*ctrl.Q[5:7]*(x_next[5:7] - x_next[12:14])
-
+    #converting euler of desired to UnitQuaternion
+    q_ref =  UnitQuaternion(RotXYZ(x_next[8:11]...))
+    J1 = ctrl.Q[1,1].*min(1 + x_next[1:4]'*q_ref, 1 - x_next[1:4]'*q_ref)
+    J2 = (x_next[5:7] - x_next[11:13])'*ctrl.Q[5:7]*(x_next[5:7] - x_next[11:13])
+    println("cost = " , J1 + J2)
     return J1 + J2
 end
 

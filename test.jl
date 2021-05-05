@@ -1,11 +1,11 @@
 include("MPC.jl");
 
 # %%
-N = 100; δt = 0.001;
+N = 100; δt = 0.01;
 
-Q  = Matrix(Diagonal([0.,0,0,0,1,1,1,0,0,0,0,0,0])) * 10.
+Q  = Matrix(Diagonal([0.1,0.1,0.1,0.1,1,1,1,0,0,0,0,0,0])) * 1.
 R  = Matrix(Diagonal([1.,1,1])) * 1
-Qf = Matrix(Diagonal([0.,0,0,0,1,1,1,0,0,0,0,0,0])) * 10.
+Qf = Matrix(Diagonal([0.1,0.1,0.1,0.1,1,1,1,0,0,0,0,0,0])) * 10.
 
 n = size(Q)[1]; m = size(R)[1];
 
@@ -18,6 +18,9 @@ x_init = [1., 0, 0, 0, 0, 0, 0,
           0, 0, 0, 0, 0, 2*π/2]
 x_hist, u_hist = simulate(ctrl, x_init; num_steps=1000, verbose=false);
 
+# %%
+tmp = param(UnitQuaternion(RotXYZ(rand(3)...)));
+size(tmp)
 # %%
 x_hist[end][1:4]
 
