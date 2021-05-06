@@ -1,12 +1,12 @@
 # %%
 using LinearAlgebra: normalize, norm, ×, I
-using Rotations: RotMatrix, UnitQuaternion, RotXYZ, RotationError, params, lmult, hmat
-using Rotations: CayleyMap, add_error, rotation_error,  kinematics, ∇differential
+using Rotations: RotMatrix, UnitQuaternion, RotXYZ, RotationError, params
+using Rotations: CayleyMap, add_error, rotation_error, kinematics, ∇differential
 using ForwardDiff
 using StaticArrays
 
 J_c = I(3)
-num_states = 13
+num_states = 14
 num_inputs = 3
 
 function dynamics(x::Vector, u::Vector)::SVector{num_states}
@@ -20,23 +20,21 @@ function dynamics(x::SVector{num_states}, u::SVector{num_inputs})::SVector{num_s
     q_sc = normalize(SVector{4}(x[1:4]))
     ω_sc = SVector{3}(x[5:7])
 
-    q_st = SVector{3}(x[8:10])  # Use Euler angles (X, Y, Z) for TRN orientation param
-    @assert q_st[1] ≈ 0 && q_st[2] ≈ 0  # Only rotates about Z
-    ω_st = SVector{3}(x[11:13])
+    q_st = normalize(SVector{4}(x[8:11]))
+    ω_st = SVector{3}(x[12:14])
     @assert ω_st[1] ≈ 0 && ω_st[2] ≈ 0  # Only rotates about Z
 
     𝜏_c = SVector{3}(u[1:3])
 
-    R_tc = RotMatrix(RotXYZ(q_st...))' * RotMatrix(UnitQuaternion(q_sc))
+    R_tc = RotMatrix(UnitQuaternion(q_st))' * RotMatrix(UnitQuaternion(q_sc))
 
     # Chaser wrt Inertial
     ω̇_sc = J_c \ (𝜏_c - ω_sc × (J_c * ω_sc))
-    q̇_sc = 1/2 * lmult(q_sc) * hmat() * ω_sc
-    # q̇_sc = kinematics(UnitQuaternion(q_sc), ω_sc)
+    q̇_sc = kinematics(UnitQuaternion(q_sc), ω_sc)
 
     # Target wrt Inertial
     ω̇_st = SVector{3}(zeros(3))    # Constant velocity
-    q̇_st = ω_st
+    q̇_st = kinematics(UnitQuaternion(q_st), ω_st)
 
     return [q̇_sc; ω̇_sc; q̇_st; ω̇_st]
 end
@@ -84,22 +82,33 @@ end
 
 
 function state_error(x, xref)
-    iq, iw, iq2, iw2 = 1:4, 5:7, 8:10, 11:13
+    iq, iw, iq2, iw2 = 1:4, 5:7, 8:11, 12:14
     q = x[iq]; qref = xref[iq]
+    q2 = x[iq2]; q2ref = xref[iq2]
     qe = Vector(rotation_error(UnitQuaternion(q), UnitQuaternion(qref),
                                CayleyMap()))
-    dx = [qe; x[iw]-xref[iw]; x[iq2]-xref[iq2]; x[iw2]-xref[iw2]]
+    q2e = Vector(rotation_error(UnitQuaternion(q2), UnitQuaternion(q2ref),
+                                CayleyMap()))
+    dx = [qe; x[iw]-xref[iw]; q2e; x[iw2]-xref[iw2]]
     return dx
 end
 
 
 function state_error_inv(xref, dx)
-    iq, iw, iq2, iw2 = 1:4, 5:7, 8:10, 11:13
+    iq, iw, iq2, iw2 = 1:4, 5:7, 8:11, 12:14
 
-    q_new = params(add_error(UnitQuaternion(xref[iq]),
-                             RotationError(SVector{3}(dx[1:3]), CayleyMap()))) # orientation of chaser wrt inertial
+    dq = dx[1:3]; qref = xref[iq]
+    dq2 = dx[7:9]; q2ref = xref[iq2]
+
+    # orientation of chaser wrt inertial
+    q_new = params(add_error(UnitQuaternion(qref),
+                             RotationError(SVector{3}(dq), CayleyMap())))
+
+    # orientation of chaser wrt inertial
+    q2_new = params(add_error(UnitQuaternion(q2ref),
+                              RotationError(SVector{3}(dq2), CayleyMap())))
+
     w_new = xref[iw] + dx[4:6]    # Angular velocity of chaser wrt inertial
-    q2_new = xref[iq2] + dx[7:9]  # Euler angles of target wrt inertial
     w2_new = xref[iw2] + dx[10:12]  # Angular velocity of target wrt inertial
 
     return vcat(q_new, w_new, q2_new, w2_new)
@@ -107,10 +116,12 @@ end
 
 
 function state_error_jacobian(x)
-    iq, iw, iq2, iw2 = 1:4, 5:7, 8:10, 11:13
+    iq, iw, iq2, iw2 = 1:4, 5:7, 8:11, 12:14
     q = x[iq]
     M = blockdiag(sparse(∇differential(UnitQuaternion(q))),
-                  sparse(I(9)))
+                  sparse(I(3)),
+                  sparse(∇differential(UnitQuaternion(q))),
+                  sparse(I(3)))
     return Matrix(M)
 end
 
@@ -156,16 +167,15 @@ function stateInterpolate_CW(x_init::Vector, N::Int64, δt::Real)
     # initial
     q1, w1 = x_init[1:4], x_init[5:7]
     # final
-    q2, w2 = x_init[8:10], x_init[11:13]
-    q2_final = q2 + w2 * δt * (N-1)
-    quat_final = UnitQuaternion(RotXYZ(q2_final...))
+    q2, w2 = x_init[8:11], x_init[12:14]
 
-    # quaternion
-    q2s = range(q2, q2_final, length=N)
-    w2s = fill(w2, N)
+    Us = [zeros(num_inputs) for _ in 1:N]
+    roll = rollout(x_init, Us, δt)
+    q2s = [roll[i][8:11] for i in 1:N]
+    w2s = [roll[i][12:14] for i in 1:N]
 
-    qs = [params(UnitQuaternion(RotXYZ(q2...))) for q2 in q2s]
-    ws = fill(w2, N)
+    qs = deepcopy(q2s)
+    ws = deepcopy(w2s)
 
     return [[qs[i]; ws[i]; q2s[i]; w2s[i]] for i in 1:N]
 end

@@ -1,16 +1,20 @@
+# %%
 include("MPC.jl");
 
 # %%
 N = 50; δt = 0.01; #N = 100
 
-Q  = Matrix(Diagonal([1,1,1,1,1,1,1,0,0,0,0,0,0])) * 10.
-R  = Matrix(Diagonal([1.,1,1])) * 5.
-Qf = Matrix(Diagonal([2.,2.,2.,2.,1.1, 1.1, 1.1, 0,0,0,0,0,0])) * 10.
+Q  = Matrix(Diagonal([10.,10,10,10, 1,1,1, 1,1,1,1, 1,1,1])) * 5.
+R  = Matrix(Diagonal([1.,1,1])) * 1.
+Qf = Matrix(Diagonal([10.,10,10,10, 1.1,1.1,1.1, 1,1,1,1, 1,1,1])) * 5.
 
 n = size(Q)[1]; m = size(R)[1];
+Np = (N-1)*(n-2+m)
+Nd = (N-1)*(n-2)
 
-ctrl = OSQPController(Q, R, Qf, δt, N, (N-1)*(n-1));
+num_steps = 1000
 
+ctrl = OSQPController(Q, R, Qf, δt, N, Np, Nd);
 
 # %%
 include("MPC.jl");
@@ -22,51 +26,34 @@ orbitRadius = earthRadius + 1.0
 μ = sqrt(G * mₛ / ((orbitRadius)^3))    # radians / hour
 
 x_init = [1., 0, 0, 0, 0, 0, 0,
-          0, 0, 0, 0, 0, μ]
-x_hist, u_hist, cost_hist = simulate(ctrl, x_init; num_steps=3000, verbose=false);
+          1., 0, 0, 0, 0, 0, μ]
+x_hist, u_hist, cost_hist = simulate(ctrl, x_init; num_steps=num_steps, verbose=false);
 
 # %%
 using DataFrames
 using CSV
 
-tmp = DataFrame(hcat(x_hist...)', ["q_w", "q_x", "q_y", "q_z", "w_cx", "w_cy", "w_cz",
-                                   "e_x", "e_y", "e_z", "w_tx", "w_ty", "w_tz"]);
+tmp = DataFrame(hcat(x_hist...)', ["q_cw", "q_cx", "q_cy", "q_cz", "w_cx", "w_cy", "w_cz",
+                                   "q_tw", "q_tx", "q_ty", "q_tz", "w_tx", "w_ty", "w_tz"]);
 CSV.write("x_hist.csv", tmp)
 
 # %%
 using Plots
 plot(cost_hist)
-# %%
-cost_hist[end]
-# %%
-x_hist[end][7]
-# %%
-plot([x_hist[i][7] for i in 1:length(x_hist)])
 
 # %%
-plot([x_hist[i][1] for i in 1:length(x_hist)])
-plot!([x_hist[i][2] for i in 1:length(x_hist)])
-plot!([x_hist[i][3] for i in 1:length(x_hist)])
+plot([x_hist[i][7] for i in 1:length(x_hist)])
+plot!([x_hist[i][14] for i in 1:length(x_hist)])
+
+# %%
+plot([x_hist[i][8] for i in 1:length(x_hist)])
+plot!([x_hist[i][11] for i in 1:length(x_hist)])
+plot!([x_hist[i][1] for i in 1:length(x_hist)])
 plot!([x_hist[i][4] for i in 1:length(x_hist)])
 
 # %%
-RotXYZ(UnitQuaternion(x_hist[end][1:4])).theta3 .% (2pi)
+x_hist[end][1:4]
+# %%
+x_hist[end][8:11]
 
 # %%
-RotXYZ(x_hist[end][8:10]...).theta3 .% (2pi)
-
-# %%
-using Rotations
-
-# %%
-dist(q1, q2) = min(1 + q1'*q2, 1 - q1'*q2)
-eul_err = [dist(x_hist[i][1:4], params(UnitQuaternion(RotXYZ(x_hist[i][8:10]...))))
-           for i = 1:length(x_hist)];
-# eul_err = hcat(eul_err...)
-# plot(eul_err)
-
-# %%
-plot(eul_err)
-
-# %%
-hcat(eul_err...)

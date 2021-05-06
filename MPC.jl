@@ -48,10 +48,10 @@ Use `Nref` to initialize a reference trajectory whose length may differ from the
 horizon length.
 `Nd` is the number of dual variables.
 """
-function OSQPController(Q::Matrix, R::Matrix, Qf::Matrix, δt::Real, N::Integer, Nd::Integer)
+function OSQPController(Q::Matrix, R::Matrix, Qf::Matrix, δt::Real, N::Integer,
+                        Np::Integer, Nd::Integer)
     n = size(Q)[1]
     m = size(R)[2]
-    Np = (N-1)*(n-1+m)   # number of primals
 
     P = spzeros(Np, Np)
     q = zeros(Np)
@@ -71,9 +71,9 @@ end
 
 function cost(ctrl::MPCController{OSQP.Model}, x_next)
     #converting euler of desired to UnitQuaternion
-    q_ref = params(UnitQuaternion(RotXYZ(x_next[8:10]...)))
+    q_ref = x_next[8:11]
     J1 = ctrl.Q[1,1] .* min(1 + x_next[1:4]' * q_ref, 1 - x_next[1:4]' * q_ref)
-    J2 = (x_next[5:7] - x_next[11:13])' * ctrl.Q[5:7,5:7] * (x_next[5:7] - x_next[11:13])
+    J2 = (x_next[5:7] - x_next[12:14])' * ctrl.Q[5:7,5:7] * (x_next[5:7] - x_next[12:14])
     # println("cost = " , J1 + J2)
     return J1 + J2
 end
@@ -90,11 +90,11 @@ Any keyword arguments will be passed to `initialize_solver!`.
 function buildQP!(ctrl::MPCController{OSQP.Model}, X, U)
     #Build QP matrices for OSQP
     N = length(ctrl.Xref)
-    n = length(ctrl.Xref[1]) - 1  #remember n = 18 not 19
+    n = length(ctrl.Xref[1]) - 2  #remember n = 18 not 19
     m = length(ctrl.Uref[1])
 
-    iq = 1:4
-    Iq = Diagonal(SA[1,1,1, 0,0,0, 0,0,0, 0,0,0])
+    iq = BitArray([1,1,1,1, 0,0,0, 1,1,1,1, 0,0,0])  # 1:4
+    Iq = Diagonal(SA[1,1,1, 0,0,0, 1,1,1, 0,0,0])
 
     q = [[ctrl.R * (U[i] - ctrl.Uref[i]) ; ctrl.Q * (X[i+1] - ctrl.Xref[i+1])] for i in 1:N-1]
     q[end][m+1:end] .= ctrl.Qf * (X[end] - ctrl.Xref[end]) # Overwriting the last value
@@ -113,9 +113,6 @@ function buildQP!(ctrl::MPCController{OSQP.Model}, X, U)
     ctrl.P .= blockdiag([blockdiag(sparse(ctrl.R), sparse(Qtilde[i])) for i=1:N-1]...)
 
     # Computing the Dynamics constraints
-    # A = [state_error_jacobian(ctrl.Xref[i+1])' *
-    #      discreteJacobian(ctrl.Xref[i], ctrl.Uref[i], ctrl.δt)[1] *
-    #      state_error_jacobian(ctrl.Xref[i]) for i in 1:N-1]
     A = [state_error_jacobian(X[i+1])' *
          discreteJacobian(ctrl.Xref[i], ctrl.Uref[i], ctrl.δt)[1] *
          state_error_jacobian(X[i]) for i in 1:N-1]
@@ -146,7 +143,7 @@ end
 
 function updateRef!(ctrl::MPCController{OSQP.Model}, x_init)
     N = length(ctrl.Xref)
-    n = length(ctrl.Xref[1]) - 1
+    n = length(ctrl.Xref[1]) - 2
     m = length(ctrl.Uref[1])
 
     ctrl.Xref .= stateInterpolate_CW(x_init, N, ctrl.δt)
@@ -157,7 +154,7 @@ end
 
 function solve_QP!(ctrl::MPCController{OSQP.Model}, x_start::Vector)#Xₖ::Vector)
     N = length(ctrl.Xref)
-    n = length(ctrl.Xref[1]) - 1 #remember n = 12 not 13 as dealing with errors
+    n = length(ctrl.Xref[1]) - 2 #remember n = 12 not 13 as dealing with errors
     m = length(ctrl.Uref[1])
 
     results = OSQP.solve!(ctrl.solver)
