@@ -66,7 +66,7 @@ scale = .95
 tCoor = [0  1; -1 0]';
 cCoor = [0  1; -1 0]';
 
-anim = @animate for i ∈ 1:num_steps
+anim = @animate for i ∈ 1:500
     scatter([p_st[i][1]], [p_st[i][2]],
             xlims=(-1.3*orbitRadius,1.3*orbitRadius),
             ylims=(-1.3*orbitRadius,1.3*orbitRadius),
@@ -101,5 +101,5 @@ anim = @animate for i ∈ 1:num_steps
 end every 1;
 
 # %%
-fps = 15
+fps = 10
 gif(anim, "graphics/anim_fps$fps.mp4", fps=fps)
