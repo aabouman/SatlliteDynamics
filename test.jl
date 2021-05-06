@@ -16,16 +16,17 @@ include("MPC.jl");
 
 x_init = [1., 0, 0, 0, 0, 0, 0,
           0, 0, 0, 0, 0, 2*π/2]
-x_hist, u_hist, cost_hist = simulate(ctrl, x_init; num_steps=5000, verbose=false);
+x_hist, u_hist, cost_hist = simulate(ctrl, x_init; num_steps=6000, verbose=false);
 
 # %%
+using Plots
 plot(cost_hist)
 
 # %%
 plot([x_hist[i][7] for i in 1:length(x_hist)])
 
 # %%
-using Plots
+
 plot([x_hist[i][1] for i in 1:length(x_hist)])
 plot!([x_hist[i][2] for i in 1:length(x_hist)])
 plot!([x_hist[i][3] for i in 1:length(x_hist)])
@@ -36,4 +37,4 @@ RotXYZ(UnitQuaternion(x_hist[end][1:4]))
 
 # %%
 (RotXYZ(x_hist[end][8:10]...))
-(0.0, 0.0, 157.08).%(2*pi)
+# (0.0, 0.0, 157.08).%(2*pi)

@@ -113,10 +113,13 @@ function buildQP!(ctrl::MPCController{OSQP.Model}, X, U)
     ctrl.P .= blockdiag([blockdiag(sparse(ctrl.R), sparse(Qtilde[i])) for i=1:N-1]...)
 
     # Computing the Dynamics constraints
-    A = [state_error_jacobian(ctrl.Xref[i+1])' *
+    # A = [state_error_jacobian(ctrl.Xref[i+1])' *
+    #      discreteJacobian(ctrl.Xref[i], ctrl.Uref[i], ctrl.δt)[1] *
+    #      state_error_jacobian(ctrl.Xref[i]) for i in 1:N-1]
+    A = [state_error_jacobian(X[i+1])' *
          discreteJacobian(ctrl.Xref[i], ctrl.Uref[i], ctrl.δt)[1] *
-         state_error_jacobian(ctrl.Xref[i]) for i in 1:N-1]
-    B = [state_error_jacobian(ctrl.Xref[i+1])' *
+         state_error_jacobian(X[i]) for i in 1:N-1]
+    B = [state_error_jacobian(X[i+1])' *
          discreteJacobian(ctrl.Xref[i], ctrl.Uref[i], ctrl.δt)[2] for i in 1:N-1]
 
     dynConstMat = blockdiag([sparse([B[i]  -I(n)]) for i in 1:(N-1)]...)
