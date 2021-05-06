@@ -159,10 +159,11 @@ function stateInterpolate_CW(x_init::Vector, N::Int64, δt::Real)
     quat_final = UnitQuaternion(RotXYZ(q2_final...))
 
     # quaternion
-    qs = slerp(UnitQuaternion(q1), quat_final, N)
-    ws = range(w1, w2, length=N)
     q2s = range(q2, q2_final, length=N)
     w2s = fill(w2, N)
+
+    qs = [params(UnitQuaternion(RotXYZ(q2...))) for q2 in q2s]
+    ws = fill(w2, N)
 
     return [[qs[i]; ws[i]; q2s[i]; w2s[i]] for i in 1:N]
 end

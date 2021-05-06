@@ -68,15 +68,16 @@ function OSQPController(Q::Matrix, R::Matrix, Qf::Matrix, δt::Real, N::Integer,
     MPCController{OSQP.Model}(P, q, C, lb, ub, N, solver, Xref, Uref, Q, R, Qf, δt)
 end
 
-function cost(ctrl::MPCController{OSQP.Model}, x_next)
 
+function cost(ctrl::MPCController{OSQP.Model}, x_next)
     #converting euler of desired to UnitQuaternion
-    q_ref =  UnitQuaternion(RotXYZ(x_next[8:11]...))
-    J1 = ctrl.Q[1,1].*min(1 + x_next[1:4]'*q_ref, 1 - x_next[1:4]'*q_ref)
-    J2 = (x_next[5:7] - x_next[11:13])'*ctrl.Q[5:7]*(x_next[5:7] - x_next[11:13])
-    println("cost = " , J1 + J2)
+    q_ref =  params(UnitQuaternion(RotXYZ(x_next[8:10]...)))
+    J1 = ctrl.Q[1,1] .* min(1 + x_next[1:4]' * q_ref, 1 - x_next[1:4]' * q_ref)
+    J2 = (x_next[5:7] - x_next[11:13])' * ctrl.Q[5:7,5:7] * (x_next[5:7] - x_next[11:13])
+    # println("cost = " , J1 + J2)
     return J1 + J2
 end
+
 
 """
     buildQP!(ctrl, A, B, Q, R, Qf; kwargs...)
@@ -95,8 +96,7 @@ function buildQP!(ctrl::MPCController{OSQP.Model}, X)
     iq = 1:4
     Iq = Diagonal(SA[1,1,1, 0,0,0, 0,0,0, 0,0,0])
 
-    q = [[-ctrl.R * ctrl.Uref[i]; -ctrl.Q * ctrl.Xref[i+1]]
-         for i in 1:N-1]
+    q = [[-ctrl.R * ctrl.Uref[i]; -ctrl.Q * ctrl.Xref[i]] for i in 1:N-1]
     q[end][m+1:end] .= -ctrl.Qf * ctrl.Xref[end] # Overwriting the last value
     qtilde = [blockdiag(sparse(I(m)), sparse(state_error_jacobian(ctrl.Xref[i+1])')) * q[i]
               for i in 1:N-1]
@@ -162,9 +162,6 @@ function solve_QP!(ctrl::MPCController{OSQP.Model}, x_start::Vector)#Xₖ::Vecto
     ΔU = [results.x[(n+m)*(i-1) .+ (1:m)] for i=1:N-1]
     Uₖ₊₁ = ctrl.Uref + ΔU
 
-    # Xₖ₊₁ = [state_error_inv(ctrl.Xref[i+1], results.x[(n+m)*(i-1) .+ (m+1:m+n)])
-    #         for i=1:N-1]
-
     u_curr = Uₖ₊₁[1]  # Recover u₁
 
     x_next = Vector(discreteDynamics(x_start, u_curr, ctrl.δt))
@@ -222,5 +219,5 @@ function simulate(ctrl::MPCController{OSQP.Model}, x_init::Vector;
         # all(x_next[1:3].+1 .≈ 1.) && println("\nDone!") && break
     end
 
-    return x_hist, u_hist
+    return x_hist, u_hist, cost_hist
 end;
