@@ -71,7 +71,7 @@ end
 
 function cost(ctrl::MPCController{OSQP.Model}, x_next)
     #converting euler of desired to UnitQuaternion
-    q_ref = params(UnitQuaternion(RotXYZ(x_next[end-5:end]...)))
+    q_ref = x_next[end-6:end-3]
 
     #x_next should be near Xref[2]
     x_ref = ctrl.Xref[2]
@@ -100,16 +100,20 @@ Any keyword arguments will be passed to `initialize_solver!`.
 function buildQP!(ctrl::MPCController{OSQP.Model}, X, U)
     #Build QP matrices for OSQP
     N = length(ctrl.Xref)
-    n = length(ctrl.Xref[1]) - 1  #remember n = 18 not 19
+    n = length(ctrl.Xref[1]) - 2  #remember n = 18 not 20
     m = length(ctrl.Uref[1])
 
-    iq = 1:4
-    Iq = Diagonal(SA[1,1,1, 0,0,0, 0,0,0, 0,0,0])
+    ip, iq, iv, iw, iq2, iw2 = 1:3, 4:7, 8:10, 11:13, 14:17, 18:20
+    iq = BitArray([0,0,0,, 1,1,1,1, 0,0,0,, 0,0,0, 1,1,1,1, 0,0,0])  # 1:4
+    Iq = Diagonal(SA[0,0,0, 1,1,1, 0,0,0, 0,0,0, 1,1,1, 0,0,0])
 
+    #generating X_tmp to ease out X
+    X_tmp = [[zeros(3,1); X[i][iq]; zeros(3,1); X[i][iw]; X[i][iq2]; X[i][iw2]] for i = 1:N]
     #separately put for position, velocity, quaternion and omega
-    q = [[ctrl.R * [-ctrl.Uref[i][1:3]; (U[i][4:6] - ctrl.Uref[i][4:6])]
-          ctrl.Q * [-ctrl.Xref[i] (X[i] - ctrl.Xref[i])]] for i in 1:N-1]
-    q[end][m+1:end] .= ctrl.Qf * (X[end] - ctrl.Xref[end]) # Overwriting the last value
+    q = [[ctrl.R * [-ctrl.Uref[i][1:3]; U[i][4:6] - ctrl.Uref[i][4:6]];
+          ctrl.Q * (X_tmp[i+1] - ctrl.Xref[i+1])  for i in 1:N-1]
+    q[end][m+1:end] .= ctrl.Qf * (X_tmp[end] - ctrl.Xref[end])
+
     qtilde = [blockdiag(sparse(I(m)), sparse(state_error_jacobian(X[i])')) * q[i]
               for i in 1:N-1]
 
@@ -128,10 +132,10 @@ function buildQP!(ctrl::MPCController{OSQP.Model}, X, U)
     # A = [state_error_jacobian(ctrl.Xref[i+1])' *
     #      discreteJacobian(ctrl.Xref[i], ctrl.Uref[i], ctrl.δt)[1] *
     #      state_error_jacobian(ctrl.Xref[i]) for i in 1:N-1]
-    A = [state_error_jacobian(X[i+1])' *
+    A = [state_error_jacobian(X_tmp[i+1])' *
          discreteJacobian(ctrl.Xref[i], ctrl.Uref[i], ctrl.δt)[1] *
-         state_error_jacobian(X[i]) for i in 1:N-1]
-    B = [state_error_jacobian(X[i+1])' *
+         state_error_jacobian(X_tmp[i]) for i in 1:N-1]
+    B = [state_error_jacobian(X_tmp[i+1])' *
          discreteJacobian(ctrl.Xref[i], ctrl.Uref[i], ctrl.δt)[2] for i in 1:N-1]
 
     dynConstMat = blockdiag([sparse([B[i]  -I(n)]) for i in 1:(N-1)]...)
@@ -143,8 +147,8 @@ function buildQP!(ctrl::MPCController{OSQP.Model}, X, U)
     ctrl.C .= vcat(dynConstMat)
 
     # Compute the equality constraints
-    dynConstlb = vcat(-A[1] * state_error(X[1], ctrl.Xref[1]), zeros((N-2)*n))
-    dynConstub = vcat(-A[1] * state_error(X[1], ctrl.Xref[1]), zeros((N-2)*n))
+    dynConstlb = vcat(-A[1] * state_error(X_tmp[1], ctrl.Xref[1]), zeros((N-2)*n))
+    dynConstub = vcat(-A[1] * state_error(X_tmp[1], ctrl.Xref[1]), zeros((N-2)*n))
 
     # Concatenate the dynamics constraints and earth radius constraint bounds
     ctrl.lb .= vcat(dynConstlb)
@@ -169,7 +173,7 @@ end
 
 function solve_QP!(ctrl::MPCController{OSQP.Model}, x_start::Vector)#Xₖ::Vector)
     N = length(ctrl.Xref)
-    n = length(ctrl.Xref[1]) - 1 #remember n = 12 not 13 as dealing with errors
+    n = length(ctrl.Xref[1]) - 2 #remember n = 12 not 13 as dealing with errors
     m = length(ctrl.Uref[1])
 
     results = OSQP.solve!(ctrl.solver)
