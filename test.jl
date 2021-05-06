@@ -4,9 +4,9 @@ include("MPC.jl");
 # %%
 N = 50; δt = 0.01; #N = 100
 
-Q  = Matrix(Diagonal([10.,10,10,10, 1,1,1, 1,1,1,1, 1,1,1])) * 5.
+Q  = Matrix(Diagonal([20.,20,20,20, 1,1,1, 1,1,1,1, 1,1,1])) * 5.
 R  = Matrix(Diagonal([1.,1,1])) * 1.
-Qf = Matrix(Diagonal([10.,10,10,10, 1.1,1.1,1.1, 1,1,1,1, 1,1,1])) * 5.
+Qf = Matrix(Diagonal([20.,20,20,20, 1.1,1.1,1.1, 1,1,1,1, 1,1,1])) * 5.
 
 n = size(Q)[1]; m = size(R)[1];
 Np = (N-1)*(n-2+m)
@@ -25,7 +25,7 @@ earthRadius = 6.371;    # Radius of earth Megameters
 orbitRadius = earthRadius + 1.0
 μ = sqrt(G * mₛ / ((orbitRadius)^3))    # radians / hour
 
-x_init = [1., 0, 0, 0, 0, 0, 0,
+x_init = [0.877583, 0.0, 0.0, -0.479426, 0, 0, 1,
           1., 0, 0, 0, 0, 0, μ]
 x_hist, u_hist, cost_hist = simulate(ctrl, x_init; num_steps=num_steps, verbose=false);
 
@@ -39,7 +39,7 @@ CSV.write("x_hist.csv", tmp)
 
 # %%
 using Plots
-plot(cost_hist)
+plot(δt .* [1:length(cost_hist);], cost_hist)
 
 # %%
 plot([x_hist[i][7] for i in 1:length(x_hist)])
@@ -53,6 +53,7 @@ plot!([x_hist[i][4] for i in 1:length(x_hist)])
 
 # %%
 x_hist[end][1:4]
+
 # %%
 x_hist[end][8:11]
 
