@@ -96,7 +96,7 @@ function buildQP!(ctrl::MPCController{OSQP.Model}, X, U)
     iq = 1:4
     Iq = Diagonal(SA[1,1,1, 0,0,0, 0,0,0, 0,0,0])
 
-    q = [[ctrl.R * (U[i] - ctrl.Uref[i]) ; ctrl.Q * (X[i] - ctrl.Xref[i])] for i in 1:N-1]
+    q = [[ctrl.R * (U[i] - ctrl.Uref[i]) ; ctrl.Q * (X[i+1] - ctrl.Xref[i+1])] for i in 1:N-1]
     q[end][m+1:end] .= ctrl.Qf * (X[end] - ctrl.Xref[end]) # Overwriting the last value
     qtilde = [blockdiag(sparse(I(m)), sparse(state_error_jacobian(X[i])')) * q[i]
               for i in 1:N-1]
@@ -106,7 +106,7 @@ function buildQP!(ctrl::MPCController{OSQP.Model}, X, U)
 
     Qtilde = [state_error_jacobian(X[i])' * ctrl.Q * state_error_jacobian(X[i]) -
               sign(X[i][iq]' * ctrl.Xref[i][iq]) * Iq * (X[i][iq]' * ctrl.Xref[i][iq])
-              for i in 1:(N-1)]
+              for i in 2:(N)]
     Qtilde[end] = (state_error_jacobian(X[end])' * ctrl.Qf * state_error_jacobian(X[end]) -
                    sign(X[end][iq]' * ctrl.Xref[end][iq]) * Iq * (X[end][iq]' * ctrl.Xref[end][iq]))
     # Building the Cost QP
