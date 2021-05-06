@@ -66,19 +66,20 @@ scale = .95
 tCoor = [0  1; -1 0]';
 cCoor = [0  1; -1 0]';
 
-anim = @animate for i ∈ 1:10
+anim = @animate for i ∈ 1:num_steps
     scatter([p_st[i][1]], [p_st[i][2]],
             xlims=(-1.3*orbitRadius,1.3*orbitRadius),
             ylims=(-1.3*orbitRadius,1.3*orbitRadius),
             aspect_ratio=:equal,
-            label="Target")
+            label="Target",
+            size=(750,750))
     scatter!([p_st[i][1] + x_hist[i][1]], [p_st[i][2] + x_hist[i][2]])
 
     quiver!([p_st[i][1]], [p_st[i][2]],
             quiver=([(R_st[i] * tCoor)[1,1]],
                     [(R_st[i] * tCoor)[2,1]]),
             aspect_ratio=:equal,
-            label="Chaser"
+            label="Chaser",
             color=1)
     quiver!([p_st[i][1]], [p_st[i][2]],
             quiver=([(R_st[i] * tCoor)[1,2]],
