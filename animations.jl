@@ -73,13 +73,13 @@ anim = @animate for i ∈ 1:num_steps
             aspect_ratio=:equal,
             label="Target",
             size=(750,750))
-    scatter!([p_st[i][1] + x_hist[i][1]], [p_st[i][2] + x_hist[i][2]])
+    scatter!([p_st[i][1] + x_hist[i][1]], [p_st[i][2] + x_hist[i][2]],
+             label="Chaser")
 
     quiver!([p_st[i][1]], [p_st[i][2]],
             quiver=([(R_st[i] * tCoor)[1,1]],
                     [(R_st[i] * tCoor)[2,1]]),
             aspect_ratio=:equal,
-            label="Chaser",
             color=1)
     quiver!([p_st[i][1]], [p_st[i][2]],
             quiver=([(R_st[i] * tCoor)[1,2]],
