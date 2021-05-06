@@ -71,11 +71,21 @@ end
 
 function cost(ctrl::MPCController{OSQP.Model}, x_next)
     #converting euler of desired to UnitQuaternion
-    q_ref = params(UnitQuaternion(RotXYZ(x_next[8:10]...)))
-    J1 = ctrl.Q[1,1] .* min(1 + x_next[1:4]' * q_ref, 1 - x_next[1:4]' * q_ref)
-    J2 = (x_next[5:7] - x_next[11:13])' * ctrl.Q[5:7,5:7] * (x_next[5:7] - x_next[11:13])
-    # println("cost = " , J1 + J2)
-    return J1 + J2
+    q_ref = params(UnitQuaternion(RotXYZ(x_next[end-5:end]...)))
+
+    #x_next should be near Xref[2]
+    x_ref = ctrl.Xref[2]
+
+    #positon cost
+    J1 = (x_next[1:3] - x_ref[1:3])' * ctrl.Q[1:3,1:3] * (x_next[1:3] - x_ref[1:3])
+    #quat cost
+    J2 = ctrl.Q[4,4] .* min(1 + x_next[4:7]' * q_ref, 1 - x_next[4:7]' * q_ref)
+    #velocity cost
+    J3 = (x_next[8:10] - x_ref[8:10])' * ctrl.Q[8:10,8:10] * (x_next[8:10] - x_ref[8:10])
+    #angular velocity cost
+    J4 = (x_next[11:13] - x_next[end-2:end])' * ctrl.Q[11:13,11:13] * (x_next[5:7] - x_next[end-2:end])
+
+    return J1 + J2 + J3 + J4
 end
 
 
@@ -96,7 +106,9 @@ function buildQP!(ctrl::MPCController{OSQP.Model}, X, U)
     iq = 1:4
     Iq = Diagonal(SA[1,1,1, 0,0,0, 0,0,0, 0,0,0])
 
-    q = [[ctrl.R * (U[i] - ctrl.Uref[i]) ; ctrl.Q * (X[i] - ctrl.Xref[i])] for i in 1:N-1]
+    #separately put for position, velocity, quaternion and omega
+    q = [[ctrl.R * [-ctrl.Uref[i][1:3]; (U[i][4:6] - ctrl.Uref[i][4:6])]
+          ctrl.Q * [-ctrl.Xref[i] (X[i] - ctrl.Xref[i])]] for i in 1:N-1]
     q[end][m+1:end] .= ctrl.Qf * (X[end] - ctrl.Xref[end]) # Overwriting the last value
     qtilde = [blockdiag(sparse(I(m)), sparse(state_error_jacobian(X[i])')) * q[i]
               for i in 1:N-1]
