@@ -1,6 +1,6 @@
 # %%
 using LinearAlgebra: normalize, norm, ×, I
-using Rotations: RotMatrix, UnitQuaternion, RotXYZ, RotationError, params
+using Rotations: RotMatrix, UnitQuaternion, RotXYZ, RotationError, params, lmult, hmat
 using Rotations: CayleyMap, add_error, rotation_error,  kinematics, ∇differential
 using ForwardDiff
 using StaticArrays
@@ -31,7 +31,9 @@ function dynamics(x::SVector{num_states}, u::SVector{num_inputs})::SVector{num_s
 
     # Chaser wrt Inertial
     ω̇_sc = J_c \ (𝜏_c - ω_sc × (J_c * ω_sc))
-    q̇_sc = kinematics(UnitQuaternion(q_sc), ω_sc)
+    q̇_sc = 1/2 * lmult(q_sc) * hmat() * ω_sc
+    # q̇_sc = kinematics(UnitQuaternion(q_sc), ω_sc)
+
     # Target wrt Inertial
     ω̇_st = SVector{3}(zeros(3))    # Constant velocity
     q̇_st = ω_st

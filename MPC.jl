@@ -71,7 +71,7 @@ end
 
 function cost(ctrl::MPCController{OSQP.Model}, x_next)
     #converting euler of desired to UnitQuaternion
-    q_ref =  params(UnitQuaternion(RotXYZ(x_next[8:10]...)))
+    q_ref = params(UnitQuaternion(RotXYZ(x_next[8:10]...)))
     J1 = ctrl.Q[1,1] .* min(1 + x_next[1:4]' * q_ref, 1 - x_next[1:4]' * q_ref)
     J2 = (x_next[5:7] - x_next[11:13])' * ctrl.Q[5:7,5:7] * (x_next[5:7] - x_next[11:13])
     # println("cost = " , J1 + J2)
@@ -87,7 +87,7 @@ should be constant between MPC iterations.
 
 Any keyword arguments will be passed to `initialize_solver!`.
 """
-function buildQP!(ctrl::MPCController{OSQP.Model}, X)
+function buildQP!(ctrl::MPCController{OSQP.Model}, X, U)
     #Build QP matrices for OSQP
     N = length(ctrl.Xref)
     n = length(ctrl.Xref[1]) - 1  #remember n = 18 not 19
@@ -96,19 +96,19 @@ function buildQP!(ctrl::MPCController{OSQP.Model}, X)
     iq = 1:4
     Iq = Diagonal(SA[1,1,1, 0,0,0, 0,0,0, 0,0,0])
 
-    q = [[-ctrl.R * ctrl.Uref[i]; -ctrl.Q * ctrl.Xref[i]] for i in 1:N-1]
-    q[end][m+1:end] .= -ctrl.Qf * ctrl.Xref[end] # Overwriting the last value
-    qtilde = [blockdiag(sparse(I(m)), sparse(state_error_jacobian(ctrl.Xref[i+1])')) * q[i]
+    q = [[ctrl.R * (U[i] - ctrl.Uref[i]) ; ctrl.Q * (X[i] - ctrl.Xref[i])] for i in 1:N-1]
+    q[end][m+1:end] .= ctrl.Qf * (X[end] - ctrl.Xref[end]) # Overwriting the last value
+    qtilde = [blockdiag(sparse(I(m)), sparse(state_error_jacobian(X[i])')) * q[i]
               for i in 1:N-1]
 
     # Building the Cost linear term
     ctrl.q .= vcat(qtilde...)
 
-    Qtilde = [state_error_jacobian(ctrl.Xref[i+1])' * ctrl.Q * state_error_jacobian(ctrl.Xref[i+1]) -
-              Iq * (X[i][iq]' * ctrl.Xref[i+1][iq]) #q[i][m .+ (iq)]
+    Qtilde = [state_error_jacobian(X[i])' * ctrl.Q * state_error_jacobian(X[i]) -
+              sign(X[i][iq]' * ctrl.Xref[i][iq]) * Iq * (X[i][iq]' * ctrl.Xref[i][iq])
               for i in 1:(N-1)]
-    Qtilde[end] = state_error_jacobian(ctrl.Xref[end])' * ctrl.Qf * state_error_jacobian(ctrl.Xref[end]) -
-                  Iq * (X[end][iq]' * ctrl.Xref[end][iq])
+    Qtilde[end] = (state_error_jacobian(X[end])' * ctrl.Qf * state_error_jacobian(X[end]) -
+                   sign(X[end][iq]' * ctrl.Xref[end][iq]) * Iq * (X[end][iq]' * ctrl.Xref[end][iq]))
     # Building the Cost QP
     ctrl.P .= blockdiag([blockdiag(sparse(ctrl.R), sparse(Qtilde[i])) for i=1:N-1]...)
 
@@ -128,8 +128,8 @@ function buildQP!(ctrl::MPCController{OSQP.Model}, X)
     ctrl.C .= vcat(dynConstMat)
 
     # Compute the equality constraints
-    dynConstlb = vcat(zeros((N-1)*n)) #-A[1] * state_error(X[1], ctrl.Xref[1]),
-    dynConstub = vcat(zeros((N-1)*n)) #-A[1] * state_error(X[1], ctrl.Xref[1]),
+    dynConstlb = vcat(-A[1] * state_error(X[1], ctrl.Xref[1]), zeros((N-2)*n))
+    dynConstub = vcat(-A[1] * state_error(X[1], ctrl.Xref[1]), zeros((N-2)*n))
 
     # Concatenate the dynamics constraints and earth radius constraint bounds
     ctrl.lb .= vcat(dynConstlb)
@@ -168,7 +168,7 @@ function solve_QP!(ctrl::MPCController{OSQP.Model}, x_start::Vector)#Xₖ::Vecto
 
     X = rollout(x_start, Uₖ₊₁, ctrl.δt)
 
-    return x_next, u_curr, X
+    return x_next, u_curr, X, Uₖ₊₁
 end
 
 
@@ -190,6 +190,7 @@ function simulate(ctrl::MPCController{OSQP.Model}, x_init::Vector;
     u_curr = zeros(m)
 
     X = [x_init for _ in 1:N]
+    U = [zeros(m) for _ in 1:N-1]
 
     x_hist = []; u_hist = []; cost_hist = []
 
@@ -205,9 +206,9 @@ function simulate(ctrl::MPCController{OSQP.Model}, x_init::Vector;
         !verbose || println("\tXref[2] = " , ctrl.Xref[2])
 
         #need to build QP each time as P updating
-        buildQP!(ctrl, X)
+        buildQP!(ctrl, X, U)
 
-        x_next, u_curr, X = solve_QP!(ctrl, x_next)
+        x_next, u_curr, X, U = solve_QP!(ctrl, x_next)
         x_hist = vcat(x_hist, [x_next])
         u_hist = vcat(u_hist, [u_curr])
 
