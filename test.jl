@@ -39,7 +39,9 @@ CSV.write("x_hist.csv", tmp)
 
 # %%
 using Plots
-plot(δt .* [1:length(cost_hist);], cost_hist)
+plot([1:length(cost_hist);], cost_hist, title="Orientation + Angular Velocity Cost",
+     xlabel="Simulation Step", legend=false, size=(1000,666), yaxis=:log)
+savefig("graphics/rotation_cost.png")
 
 # %%
 plot([x_hist[i][7] for i in 1:length(x_hist)])
