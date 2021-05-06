@@ -2,9 +2,9 @@
 include("MPC.jl");
 
 # %%
-N = 50; δt = 0.05;
+N = 50; δt = 0.01; #N = 100
 
-Q  = Matrix(Diagonal([1.,1,1,1,1,1])) * 1.
+Q  = Matrix(Diagonal([1.,1,1,1,1,1])) * 10.
 R  = Matrix(Diagonal([1.,1,1])) * .1
 Qf = Matrix(Diagonal([1.,1,1,1,1,1])) * 10.
 
@@ -24,7 +24,7 @@ earthRadius = 6.371;    # Radius of earth Megameters
 orbitRadius = earthRadius + 1.
 μ = sqrt(G * mₛ / ((orbitRadius)^3))    # radians / hour
 
-num_steps = 2000
+num_steps = 1000
 x_init = [-.5, 0, 0, 0.1, 0., 0]
 x_hist, u_hist = simulate(ctrl, x_init; num_steps=num_steps, verbose=false);
 
@@ -49,13 +49,7 @@ p_tc = Matrix(CSV.read("data/x_hist_position.csv", DataFrame))[:, 1:3];
 
 tmp = Matrix(CSV.read("data/x_hist_quaternion.csv", DataFrame));
 R_sc = [RotMatrix(UnitQuaternion(tmp[i,1:4]))[1:2,1:2] for i in 1:size(tmp)[1]];
-R_st = [RotMatrix(UnitQuaternion(RotXYZ(tmp[i,8:10]...)))[1:2,1:2] for i in 1:size(tmp)[1]];
-# R_st = [RotMatrix(UnitQuaternion(RotXYZ(0,0,δt*i*μ)))[1:2,1:2] for i in 1:size(tmp)[1]];
-
-# %%
-RotXYZ(UnitQuaternion(tmp[end,1:4])).theta3 % (2pi)
-# %%
-RotXYZ(tmp[end,8:10]...).theta3 % (2pi)
+R_st = [RotMatrix(UnitQuaternion(tmp[i,8:11]))[1:2,1:2] for i in 1:size(tmp)[1]];
 
 # %%
 using Plots
@@ -63,10 +57,10 @@ using Images, FileIO
 img = load("graphics/planet-earth.png")
 
 scale = .95
-tCoor = [0  1; -1 0]';
-cCoor = [0  1; -1 0]';
+tCoor = [1  0; 0  1]';
+cCoor = [1  0; 0  1]';
 
-anim = @animate for i ∈ 1:500
+anim = @animate for i ∈ 1:num_steps
     scatter([p_st[i][1]], [p_st[i][2]],
             xlims=(-1.3*orbitRadius,1.3*orbitRadius),
             ylims=(-1.3*orbitRadius,1.3*orbitRadius),
@@ -101,5 +95,5 @@ anim = @animate for i ∈ 1:500
 end every 1;
 
 # %%
-fps = 10
+fps = 20
 gif(anim, "graphics/anim_fps$fps.mp4", fps=fps)
