@@ -5,14 +5,9 @@ using Rotations: CayleyMap, add_error, rotation_error, params, RotXYZ, ∇differ
 using ForwardDiff
 using StaticArrays
 
-mₜ = 419.709;
-mₛ = 5.972e21;
-G = 8.6498928e-19;
-earthRadius = 6.37814;  # Megameters
-μ = sqrt(G * mₛ / (earthRadius^3))
-
 num_states = 6
 num_inputs = 3
+
 
 function dynamics(x::Vector, u::Vector)::SVector{num_states}
     xStatic = SVector{length(x)}(x)
