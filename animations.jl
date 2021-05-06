@@ -102,4 +102,4 @@ end every 1;
 
 # %%
 fps = 15
-gif(anim, "graphics/anim_fps$fps.gif", fps=fps)
+gif(anim, "graphics/anim_fps$fps.mp4", fps=fps)
