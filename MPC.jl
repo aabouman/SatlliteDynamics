@@ -159,7 +159,19 @@ function solve_QP!(ctrl::MPCController{OSQP.Model}, x_start::Vector)#Xₖ::Vecto
     return x_next, u_curr
 end
 
+function cost(ctrl::MPCController{OSQP.Model}, x_next)
+    #x_next should be near Xref[2]
+    x_ref = ctrl.Xref[2]
 
+    #positon cost
+    J1 = (x_next[1:3] - x_ref[1:3])' * ctrl.Q[1:3,1:3] * (x_next[1:3] - x_ref[1:3])
+    #quat cost
+    #velocity cost
+    J2 = (x_next[4:6] - x_ref[4:6])' * ctrl.Q[4:6,4:6] * (x_next[4:6] - x_ref[4:6])
+    #angular velocity cost
+
+    return J1 + J2
+end
 
 """
 controller function is called as controller(x), where x is a state vector
@@ -177,7 +189,7 @@ function simulate(ctrl::MPCController{OSQP.Model}, x_init::Vector;
     x_next = x_init
     u_curr = zeros(m)
 
-    x_hist = []; u_hist = []
+    x_hist = []; u_hist = []; cost_hist = []
 
     x_hist = vcat(x_hist, [x_next])
 
@@ -198,10 +210,11 @@ function simulate(ctrl::MPCController{OSQP.Model}, x_init::Vector;
         x_next, u_curr = solve_QP!(ctrl, x_next)
         x_hist = vcat(x_hist, [x_next])
         u_hist = vcat(u_hist, [u_curr])
+        cost_hist = vcat(cost_hist, cost(ctrl, x_next))
 
         !verbose || println("\tu_curr = " , u_curr)
         !verbose || println("############################")
     end
 
-    return x_hist, u_hist
+    return x_hist, u_hist, cost_hist
 end;

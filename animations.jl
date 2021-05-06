@@ -26,10 +26,15 @@ orbitRadius = earthRadius + 1.
 
 num_steps = 1000
 x_init = [-.5, 0, 0, 0.1, 0., 0]
-x_hist, u_hist = simulate(ctrl, x_init; num_steps=num_steps, verbose=false);
+x_hist, u_hist, cost_hist = simulate(ctrl, x_init; num_steps=num_steps, verbose=false);
 
 # %%
 using Plots
+plot([1:length(cost_hist);], cost_hist, title="Postion + Velocity Cost", xlabel="Simulation Step",
+     legend=false, size=(1000,666), yaxis=:log)
+savefig("graphics/linear_cost.png")
+
+# %%
 plot([x_hist[i][1] for i in 1:length(x_hist)])
 plot!([x_hist[i][2] for i in 1:length(x_hist)])
 
