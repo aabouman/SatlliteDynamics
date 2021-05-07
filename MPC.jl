@@ -2,13 +2,13 @@ using OSQP
 using SparseArrays
 using Rotations
 
+include("dynamics.jl")
+
 earthRadius = 6.37814  # Megameters
 
 """
     MPCController
-
 An MPC controller that uses a solver of type `S` to solve a QP at every iteration.
-
 It will track the reference trajectory specified by `Xref`, `Uref` and `times`
 with an MPC horizon of `Nmpc`. It will track the terminal reference state if
 the horizon extends beyond the reference horizon.
@@ -36,20 +36,17 @@ end
 
 """
     OSQPController(n,m,N,Nref,Nd)
-
 Generate an `MPCController` that uses OSQP to solve the QP.
 Initializes the controller with matrices consistent with `n` states,
 `m` controls, and an MPC horizon of `N`, and `Nref` constraints.
-
 Use `Nref` to initialize a reference trajectory whose length may differ from the
 horizon length.
 `Nd` is the number of dual variables.
 """
-function OSQPController(Q::Matrix, R::Matrix, Qf::Matrix, δt::Real, N::Integer, Nd::Integer)
+function OSQPController(Q::Matrix, R::Matrix, Qf::Matrix, δt::Real, N::Integer,
+                        Np::Integer, Nd::Integer)
     n = size(Q)[1]
-
     m = size(R)[2]
-    Np = (N-1)*(n-1+m)   # number of primals
 
     P = spzeros(Np, Np)
     q = zeros(Np)
@@ -67,6 +64,23 @@ function OSQPController(Q::Matrix, R::Matrix, Qf::Matrix, δt::Real, N::Integer,
 end
 
 
+function cost(ctrl::MPCController{OSQP.Model}, x_next)
+    p1 = x_next[1:3]
+    q1 = x_next[4:7]
+    v1 = x_next[8:10]
+    w1 = x_next[11:13]
+    q2 = x_next[17:20]
+    w2 = x_next[24:26]
+
+    J1 = p1' * ctrl.Q[1:3, 1:3] * p1
+    J2 = ctrl.Q[4,4] .* min(1 + q1' * q2, 1 - q1' * q2)
+    J3 = v1' * ctrl.Q[8:10, 8:10] * v1
+    J4 = (w1 - w2)' * ctrl.Q[11:13, 11:13] * (w1 - w2)
+
+    return J1 + J2 + J3 + J4
+end
+
+
 """
     buildQP!(ctrl, A, B, Q, R, Qf; kwargs...)
 
@@ -78,33 +92,37 @@ Any keyword arguments will be passed to `initialize_solver!`.
 function buildQP!(ctrl::MPCController{OSQP.Model}, X, U)
     #Build QP matrices for OSQP
     N = length(ctrl.Xref)
-    n = length(ctrl.Xref[1]) - 1  #remember n = 12 not 13
+    n = length(ctrl.Xref[1]) - 2
     m = length(ctrl.Uref[1])
 
-    iq = 4:7
-    Iq = Diagonal(SA[0,0,0, 1,1,1, 0,0,0, 0,0,0])
+    iq = BitArray([0,0,0, 1,1,1,1, 0,0,0, 0,0,0,
+                   0,0,0, 1,1,1,1, 0,0,0, 0,0,0])
+    Iq = Diagonal(SA[0,0,0, 1,1,1, 0,0,0, 0,0,0,
+                     0,0,0, 1,1,1, 0,0,0, 0,0,0])
 
-    #remember q has u subsumed => q[k] is 19x1 and not 13x1 {u,x}
-    q = [[-ctrl.R * (U[i] - ctrl.Uref[i]); -ctrl.Q * (X[i+1] - ctrl.Xref[i+1])] for i in 1:N-1]
-    q[end][m+1:end] .= -ctrl.Qf * (X[end] - ctrl.Xref[end]) #overwriting the last value
+    q = [[ctrl.R * (U[i] - ctrl.Uref[i]) ; ctrl.Q * (X[i+1] - ctrl.Xref[i+1])]
+         for i in 1:N-1]
+    q[end][m+1:end] .= ctrl.Qf * (X[end] - ctrl.Xref[end]) # Overwriting the last value
+    qtilde = [blockdiag(sparse(I(m)), sparse(state_error_jacobian(X[i])')) * q[i]
+              for i in 1:N-1]
 
-    Qtilde = [state_error_jacobian(X[i+1])' * ctrl.Q * state_error_jacobian(X[i+1]) - Iq * (q[i][m .+ (iq)]' * X[i+1][iq])
-              for i in 1:(N-1)]
-    Qtilde[end] = state_error_jacobian(X[end])' * ctrl.Qf * state_error_jacobian(X[end]) - Iq * (q[end][m .+ (iq)]' * X[end][iq])
+    # Building the Cost linear term
+    ctrl.q .= vcat(qtilde...)
 
-    qtilde = [blockdiag(sparse(I(m)), sparse(state_error_jacobian(X[i+1])')) * q[i] for i in 1:N-1]
-
+    Qtilde = [state_error_jacobian(X[i])' * ctrl.Q * state_error_jacobian(X[i]) -
+              sign(X[i][iq]' * ctrl.Xref[i][iq]) * Iq * (X[i][iq]' * ctrl.Xref[i][iq])
+              for i in 2:(N)]
+    Qtilde[end] = (state_error_jacobian(X[end])' * ctrl.Qf * state_error_jacobian(X[end]) -
+                   sign(X[end][iq]' * ctrl.Xref[end][iq]) * Iq * (X[end][iq]' * ctrl.Xref[end][iq]))
     # Building the Cost QP
     ctrl.P .= blockdiag([blockdiag(sparse(ctrl.R), sparse(Qtilde[i])) for i=1:N-1]...)
 
-    ctrl.q .= vcat(qtilde...)
-
     # Computing the Dynamics constraints
     A = [state_error_jacobian(X[i+1])' *
-         jacobian(ctrl.Xref[i], ctrl.Uref[i])[1] *
+         discreteJacobian(ctrl.Xref[i], ctrl.Uref[i], ctrl.δt)[1] *
          state_error_jacobian(X[i]) for i in 1:N-1]
-    B = [(state_error_jacobian(X[i+1])' *
-          jacobian(ctrl.Xref[i], ctrl.Uref[i])[2]) for i in 1:N-1]
+    B = [state_error_jacobian(X[i+1])' *
+         discreteJacobian(ctrl.Xref[i], ctrl.Uref[i], ctrl.δt)[2] for i in 1:N-1]
 
     dynConstMat = blockdiag([sparse([B[i]  -I(n)]) for i in 1:(N-1)]...)
     dynConstMat += blockdiag(spzeros(n, m),
@@ -116,7 +134,6 @@ function buildQP!(ctrl::MPCController{OSQP.Model}, X, U)
 
     # Compute the equality constraints
     dynConstlb = vcat(-A[1] * state_error(X[1], ctrl.Xref[1]), zeros((N-2)*n))
-    println("Dynamic Constraints: ", dynConstlb[1:n])
     dynConstub = vcat(-A[1] * state_error(X[1], ctrl.Xref[1]), zeros((N-2)*n))
 
     # Concatenate the dynamics constraints and earth radius constraint bounds
@@ -125,49 +142,53 @@ function buildQP!(ctrl::MPCController{OSQP.Model}, X, U)
 
     # Initialize the included solver
     OSQP.setup!(ctrl.solver, P=ctrl.P, q=ctrl.q, A=ctrl.C, l=ctrl.lb, u=ctrl.ub,
-                polish=1, verbose=0)
+             polish=1, verbose=0)
     return nothing
 end
 
-"""
-    find the reference trajectory using
-    initial chaser position and
-    final target position
-"""
-function stateInterpolate(x_init, x_final, N)
-    # initial
-    p1, q1, v1, w1 = x_init[1:3], x_init[4:7], x_init[8:10], x_init[11:13]
-    # final
-    p2, q2, v2, w2 = x_final[1:3], x_final[4:7], x_final[8:10], x_final[11:13]
-    # quaternion
-    ps = range(p1, p2, length=N)
-    qs = slerp(UnitQuaternion(q1), UnitQuaternion(q2), N)
-    vs = range(v1, v2, length=N)
-    ws = range(w1, w2, length=N)
 
-    # Concatenate
-    xref = vcat(hcat(ps...), hcat(qs...), hcat(vs...), hcat(ws...))
+function stateInterpolate_CW(x_init::Vector, N::Int64, δt::Real)
+    ip1, iq1, iv1, iw1 =  1:3,   4:7,   8:10, 11:13
+    ip2, iq2, iv2, iw2 = 14:16, 17:20, 21:23, 24:26
 
-    return [xref[:,i] for i in 1:N]
+    # Position/velocity of chaser WRT target
+    p2, v2 = x_init[ip2], x_init[iv2]
+
+    roll = rollout(x_init, [zeros(num_inputs) for _ in 1:N], δt)
+
+    # Build the rollout of target quaternion and angular velocity
+    p1s = [roll[i][ip1] for i in 1:N]
+    q1s = [roll[i][iq1] for i in 1:N]
+    v1s = [roll[i][iv1] for i in 1:N]
+    w1s = [roll[i][iw1] for i in 1:N]
+
+    # Build the reference trajectory for the chaser's orientaiton and angular
+    # velocity. This is just the trajectory of the target
+    p2s = range(p2, zeros(3), length=N)
+    q2s = deepcopy(q1s)
+    v2s = range(v2, zeros(3), length=N)
+    w2s = deepcopy(w1s)
+
+    return [[p1s[i]; q1s[i]; v1s[i]; w1s[i];
+             p2s[i]; q2s[i]; v2s[i]; w2s[i]] for i in 1:N]
 end
 
-function updateRef!(ctrl::MPCController{OSQP.Model}, Xₖ, Uₖ, Xₜₖ, Uₜₖ)
+
+function updateRef!(ctrl::MPCController{OSQP.Model}, x_init)
     N = length(ctrl.Xref)
-    n = length(ctrl.Xref[1]) - 1
+    n = length(ctrl.Xref[1]) - 2
     m = length(ctrl.Uref[1])
 
-    # pₛₜᵗ, qₛₜ, vₛₜᵗ, wₛₜ = Xₜₖ[end][1:3], Xₜₖ[end][4:7], Xₜₖ[end][8:10], Xₜₖ[end][11:13]
-    # UnitQuaternion()
-
-    ctrl.Xref .= stateInterpolate(Xₖ[1], Xₜₖ[end], N)
+    ctrl.Xref .= stateInterpolate_CW(x_init, N, ctrl.δt)
     ctrl.Uref .= [zeros(m) for _ in N-1] # Uₖ
 
     return nothing
 end
 
-function solve_QP!(ctrl::MPCController{OSQP.Model}, Xₖ, Xₜₖ, Uₜₖ)
+
+function solve_QP!(ctrl::MPCController{OSQP.Model}, x_start::Vector)
     N = length(ctrl.Xref)
-    n = length(ctrl.Xref[1]) - 1 #remember n = 12 not 13 as dealing with errors
+    n = length(ctrl.Xref[1]) - 2 #remember n = 12 not 13 as dealing with errors
     m = length(ctrl.Uref[1])
 
     results = OSQP.solve!(ctrl.solver)
@@ -175,105 +196,61 @@ function solve_QP!(ctrl::MPCController{OSQP.Model}, Xₖ, Xₜₖ, Uₜₖ)
     ΔU = [results.x[(n+m)*(i-1) .+ (1:m)] for i=1:N-1]
     Uₖ₊₁ = ctrl.Uref + ΔU
 
-    Xₖ₊₁ = [state_error_inv(ctrl.Xref[i+1], results.x[(n+m)*(i-1) .+ (m+1:m+n)]) for i=1:N-1]
-    # Xₖ₊₁ = ctrl.Xref[2:end] + ΔX
-    Xₖ₊₁ = vcat(Xₖ₊₁, [discreteDynamics(Xₖ₊₁[end], Uₖ₊₁[end], ctrl.δt)])
+    u_curr = Uₖ₊₁[1]  # Recover u₁
 
-    # println("ΔX = " , ΔX[1])
-    # println("ΔU = " , ΔU[1])
+    x_next = Vector(discreteDynamics(x_start, u_curr, ctrl.δt))
 
-    Xₜₖ₊₁ = rollout(Xₜₖ[2], Uₜₖ, ctrl.δt)
-    Uₜₖ₊₁ = Uₜₖ
+    X = rollout(x_start, Uₖ₊₁, ctrl.δt)
 
-    return Xₖ₊₁, Uₖ₊₁, Xₜₖ₊₁, Uₜₖ₊₁
+    return x_next, u_curr, X, Uₖ₊₁
 end
+
 
 """
 controller function is called as controller(x), where x is a state vector
 (length 13)
 """
-function simulate(ctrl::MPCController{OSQP.Model}, xₛc_init::Vector, xₛₜ_init::Vector;
-                  num_steps=1000)
+function simulate(ctrl::MPCController{OSQP.Model}, x_init::Vector;
+                  num_steps=1000, verbose=false)
     N = length(ctrl.Xref)
     n = length(ctrl.Xref[1])
     m = length(ctrl.Uref[1])
 
     num_steps ≥ N || error("Number of steps being simulated must be ≥ the controller time horizon")
 
-    Uₖ = [zeros(m) for _ in 1:N-1]
-    Uₜₖ = [zeros(m) for _ in 1:N-1]
-    Xₜₖ = rollout(xₛₜ_init, Uₜₖ, ctrl.δt)
-    Xₖ = stateInterpolate(xₛc_init, Xₜₖ[end], N)
+    #initialize trajectory
+    x_next = x_init
+    u_curr = zeros(m)
 
-    x_hist = [zeros(n) for _ in 1:num_steps+1]
-    u_hist = [zeros(n) for _ in 1:num_steps]
+    X = [x_init for _ in 1:N]
+    U = [zeros(m) for _ in 1:N-1]
 
-    x_hist[1] = xₛc_init
+    x_hist = []; u_hist = []; cost_hist = []
+
+    x_hist = vcat(x_hist, [x_next])
 
     for i in 1:num_steps
-        println("step = " , i)
+        !verbose && print("step = $i\r")
 
-        updateRef!(ctrl, Xₖ, Uₖ, Xₜₖ, Uₜₖ)
+        updateRef!(ctrl, x_next)
 
-        println("Xₖ[1] = " , Xₖ[1])
-        println("Xref[1] = " , ctrl.Xref[1])
-        println("Xₖ[2] = " , Xₖ[2])
-        println("Xref[2] = " , ctrl.Xref[2])
-        println("Xₖ[end] = " , Xₖ[end])
-        println("Xref[end] = " , ctrl.Xref[end])
+        !verbose || println("step = " , i)
+        !verbose || println("\tx_curr = " , x_next)
+        !verbose || println("\tXref[2] = " , ctrl.Xref[2])
 
-        buildQP!(ctrl, Xₖ, Uₖ)
+        #need to build QP each time as P updating
+        buildQP!(ctrl, X, U)
 
-        Xₖ, Uₖ, Xₜₖ, Uₜₖ = solve_QP!(ctrl, Xₖ, Xₜₖ, Uₜₖ)
+        x_next, u_curr, X, U = solve_QP!(ctrl, x_next)
+        x_hist = vcat(x_hist, [x_next])
+        u_hist = vcat(u_hist, [u_curr])
 
-        x_hist[i+1] = Xₖ[1]
-        u_hist[i] = Uₖ[1]
+        !verbose || println("\tu_curr = " , u_curr)
+        !verbose || println("COST = " , cost(ctrl, x_next))
+        !verbose || println("############################")
 
-        println("QP solution x: " , Xₖ[1])
-        println("QP solution u: " , Uₖ[1])
-        println("############################")
+        cost_hist = vcat(cost_hist, cost(ctrl, x_next))
     end
 
-    return x_hist, u_hist
+    return x_hist, u_hist, cost_hist
 end;
-
-
-function slerp(qa::UnitQuaternion, qb::UnitQuaternion, N::Int64)
-
-    function slerpHelper(qa::UnitQuaternion{T}, qb::UnitQuaternion{T}, t::T) where {T}
-        # Borrowed from Quaternions.jl
-        # http://www.euclideanspace.com/maths/algebra/realNormedAlgebra/quaternions/slerp/
-        coshalftheta = qa.w * qb.w + qa.x * qb.x + qa.y * qb.y + qa.z * qb.z;
-
-        if coshalftheta < 0
-            qm = -qb
-            coshalftheta = -coshalftheta
-        else
-            qm = qb
-        end
-        abs(coshalftheta) >= 1.0 && return Rotations.params(qa)
-
-        halftheta    = acos(coshalftheta)
-        sinhalftheta = sqrt(one(T) - coshalftheta * coshalftheta)
-
-        if abs(sinhalftheta) < 0.001
-            return Rotations.params(UnitQuaternion(T(0.5) * (qa.w + qb.w),
-                                                   T(0.5) * (qa.x + qb.x),
-                                                   T(0.5) * (qa.y + qb.y),
-                                                   T(0.5) * (qa.z + qb.z)))
-        end
-
-        ratio_a = sin((one(T) - t) * halftheta) / sinhalftheta
-        ratio_b = sin(t * halftheta) / sinhalftheta
-
-        temp = Rotations.params(UnitQuaternion(qa.w * ratio_a + qm.w * ratio_b,
-                                               qa.x * ratio_a + qm.x * ratio_b,
-                                               qa.y * ratio_a + qm.y * ratio_b,
-                                               qa.z * ratio_a + qm.z * ratio_b)
-                                )
-        return temp
-    end
-
-    ts = range(0., 1., length=N)
-    return [slerpHelper(qa, qb, t) for t in ts]
-end

@@ -15,8 +15,9 @@ m꜀ = 419.709;
 mₛ = 5.972e21;
 G = 8.6498928e-19;
 
-num_states = 14
-num_inputs = 3
+num_states = 26
+num_inputs = 6
+
 
 function dynamics(x::Vector, u::Vector)
     xStatic = SVector{length(x)}(x)
@@ -24,7 +25,8 @@ function dynamics(x::Vector, u::Vector)
     dynamics(xStatic, uStatic)
 end
 
-function dynamics(x::SVector{26}, u::SVector{6})
+
+function dynamics(x::SVector{num_states}, u::SVector{num_inputs})
     pₛₜˢ = @SVector [x[1], x[2], x[3]]
     qₛₜˢ = normalize(@SVector [x[4], x[5], x[6], x[7]])
     vₛₜᵗ = @SVector [x[8], x[9], x[10]]
@@ -91,12 +93,14 @@ function dynamics(x::SVector{26}, u::SVector{6})
             ṗₜ꜀ᵗ; q̇ₛ꜀ˢ; v̇ₜ꜀ᵗ; ω̇ₛ꜀ᶜ]
 end
 
+
 function jacobian(x::Vector, u::Vector)
     A = ForwardDiff.jacobian(x_temp->dynamics(x_temp, u), x)
     B = ForwardDiff.jacobian(u_temp->dynamics(x, u_temp), u)
 
     return (A, B)
 end
+
 
 function discreteDynamics(x::Vector, u::Vector, δt::Real)
     k1 = dynamics(x, u)
@@ -107,6 +111,14 @@ function discreteDynamics(x::Vector, u::Vector, δt::Real)
 
     return xnext
 end
+
+
+function discreteJacobian(x::Vector, u::Vector, δt::Real)
+    A = ForwardDiff.jacobian(x_temp->discreteDynamics(x_temp, u, δt), x)
+    B = ForwardDiff.jacobian(u_temp->discreteDynamics(x, u_temp, δt), u)
+    return (A, B)
+end
+
 
 function rollout(x0::Vector, Utraj::Vector, δt::Real)
     N = length(Utraj)
@@ -120,51 +132,92 @@ function rollout(x0::Vector, Utraj::Vector, δt::Real)
     return Xtraj
 end
 
-function state_error(x, xref)
+
+function state_error(x::Vector, xref::Vector)
     ip1, iq1, iv1, iw1 =  1:3,   4:7,   8:10, 11:13
     ip2, iq2, iv2, iw2 = 14:16, 17:20, 21:23, 24:26
 
     q1 = x[iq1]; q1ref = xref[iq1]
-    q1e = Vector(rotation_error(UnitQuaternion(q1), UnitQuaternion(q1ref),
+    q1e = Vector(rotation_error(UnitQuaternion(q1),
+                                UnitQuaternion(q1ref),
                                 CayleyMap()))
-
     q2 = x[iq2]; q2ref = xref[iq2]
-    q2e = Vector(rotation_error(UnitQuaternion(q2), UnitQuaternion(q2ref),
+    q2e = Vector(rotation_error(UnitQuaternion(q2),
+                                UnitQuaternion(q2ref),
                                 CayleyMap()))
-
 
     dx = [x[ip1] - xref[ip1]; q1e; x[iv1] - xref[iv1]; x[iw1] - xref[iw1];
           x[ip2] - xref[ip2]; q2e; x[iv2] - xref[iv2]; x[iw2] - xref[iw2]]
     return dx
 end
 
-function state_error_inv(xref, dx)
+
+function state_error_inv(xref::Vector, dx::Vector)
     ip1, iq1, iv1, iw1 =  1:3,   4:7,   8:10, 11:13
     ip2, iq2, iv2, iw2 = 14:16, 17:20, 21:23, 24:26
 
     idp1, idq1, idv1, idw1 =  1:3,   4:6,   7:9,  10:12
     idp2, idq2, idv2, idw2 = 13:15, 16:18, 19:21, 22:24
 
-    dq1 = dx[4:6]; qref = xref[iq]
-    dq2 = dx[4:6]; q2ref = xref[iq2]
+    dq1 = dx[idq1]; q1ref = xref[iq1]
+    dq2 = dx[idq2]; q2ref = xref[iq2]
 
-    q1 = params(add_error(UnitQuaternion(xref[iq1]),
-                          RotationError(SVector{3}(dx[idq1]), CayleyMap())))
-    q2 = params(add_error(UnitQuaternion(xref[iq1]),
-                          RotationError(SVector{3}(dx[idq1]), CayleyMap())))
+    q1 = params(add_error(UnitQuaternion(q1ref),
+                          RotationError(SVector{3}(dq1), CayleyMap())))
+    q2 = params(add_error(UnitQuaternion(q2ref),
+                          RotationError(SVector{3}(dq2), CayleyMap())))
 
     return [xref[ip1] + dx[idp1]; q1; xref[iv1] + dx[idv1]; xref[iw1] + dx[idw1];
             xref[ip2] + dx[idp2]; q2; xref[iv2] + dx[idv2]; xref[iw2] + dx[idw2]]
 end
 
-function state_error_jacobian(x)
+
+function state_error_jacobian(x::Vector)
     ip1, iq1, iv1, iw1 =  1:3,   4:7,   8:10, 11:13
     ip2, iq2, iv2, iw2 = 14:16, 17:20, 21:23, 24:26
 
     q1 = x[iq1]; q2 = x[iq2]
-    M = blockdiag(sparse(∇differential(UnitQuaternion(q1))),
-                  sparse(I(3)),
+    M = blockdiag(sparse(I(3)),
+                  sparse(∇differential(UnitQuaternion(q1))),
+                  sparse(I(9)),
                   sparse(∇differential(UnitQuaternion(q2))),
-                  sparse(I(3)))
+                  sparse(I(6)))
     return Matrix(M)
+end
+
+
+function slerp(qa::UnitQuaternion, qb::UnitQuaternion, N::Int64)
+    function slerpHelper(qa::UnitQuaternion{T}, qb::UnitQuaternion{T}, t::T) where {T}
+        coshalftheta = qa.w * qb.w + qa.x * qb.x + qa.y * qb.y + qa.z * qb.z;
+
+        if coshalftheta < 0
+            qm = -qb
+            coshalftheta = -coshalftheta
+        else
+            qm = qb
+        end
+        abs(coshalftheta) >= 1.0 && return params(qa)
+
+        halftheta    = acos(coshalftheta)
+        sinhalftheta = sqrt(one(T) - coshalftheta * coshalftheta)
+
+        if abs(sinhalftheta) < 0.001
+            return params(UnitQuaternion(T(0.5) * (qa.w + qb.w),
+                          T(0.5) * (qa.x + qb.x),
+                          T(0.5) * (qa.y + qb.y),
+                          T(0.5) * (qa.z + qb.z)))
+        end
+
+        ratio_a = sin((one(T) - t) * halftheta) / sinhalftheta
+        ratio_b = sin(t * halftheta) / sinhalftheta
+
+        temp = params(UnitQuaternion(qa.w * ratio_a + qm.w * ratio_b,
+                                     qa.x * ratio_a + qm.x * ratio_b,
+                                     qa.y * ratio_a + qm.y * ratio_b,
+                                     qa.z * ratio_a + qm.z * ratio_b))
+        return temp
+    end
+
+    ts = range(0., 1., length=N)
+    return [slerpHelper(qa, qb, t) for t in ts]
 end
