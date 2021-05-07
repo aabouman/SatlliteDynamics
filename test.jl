@@ -3,10 +3,6 @@ include("dynamics.jl")
 include("MPC.jl");
 
 # %%
-q1 = rand(UnitQuaternion)
-RotMatrix(q1) ≈ hmat()' * lmult(q1) * rmult(q1)' * hmat()
-
-# %%
 n = 12; m = 6;
 N = 10000; δt = 0.001;
 
@@ -32,7 +28,7 @@ plot!(x1s+x2s, y1s+y2s)
 plot!(x3s, y3s)
 
 # %%
-jacobian(xₛₜ_init2, rand(6))
+jacobian(xₛₜ_init2, rand(6))[1]
 
 # %%
 n = 12; m = 6;

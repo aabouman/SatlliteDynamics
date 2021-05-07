@@ -121,41 +121,50 @@ function rollout(x0::Vector, Utraj::Vector, δt::Real)
 end
 
 function state_error(x, xref)
-    ip, iq, iv, iw = 1:3, 4:7, 8:10, 11:13
-    q = x[iq]; qref = xref[iq]
-    qe = Vector(rotation_error(UnitQuaternion(q), UnitQuaternion(qref),
-                               CayleyMap()))
-    dx = [x[ip] - xref[ip]; qe; x[iv] - xref[iv]; x[iw] - xref[iw]]
+    ip1, iq1, iv1, iw1 =  1:3,   4:7,   8:10, 11:13
+    ip2, iq2, iv2, iw2 = 14:16, 17:20, 21:23, 24:26
+
+    q1 = x[iq1]; q1ref = xref[iq1]
+    q1e = Vector(rotation_error(UnitQuaternion(q1), UnitQuaternion(q1ref),
+                                CayleyMap()))
+
+    q2 = x[iq2]; q2ref = xref[iq2]
+    q2e = Vector(rotation_error(UnitQuaternion(q2), UnitQuaternion(q2ref),
+                                CayleyMap()))
+
+
+    dx = [x[ip1] - xref[ip1]; q1e; x[iv1] - xref[iv1]; x[iw1] - xref[iw1];
+          x[ip2] - xref[ip2]; q2e; x[iv2] - xref[iv2]; x[iw2] - xref[iw2]]
     return dx
 end
 
 function state_error_inv(xref, dx)
-    ip, iq, iv, iw = 1:3, 4:7, 8:10, 11:13
+    ip1, iq1, iv1, iw1 =  1:3,   4:7,   8:10, 11:13
+    ip2, iq2, iv2, iw2 = 14:16, 17:20, 21:23, 24:26
 
-    p_new = xref[ip] + dx[1:3]
-    q_new = add_error(UnitQuaternion(xref[iq]),
-                      RotationError(SVector{3}(dx[4:6]), CayleyMap()))
-    q_new = params(q_new)
-    v_new = xref[iv] + dx[7:9]
-    w_new = xref[iw] + dx[10:12]
+    idp1, idq1, idv1, idw1 =  1:3,   4:6,   7:9,  10:12
+    idp2, idq2, idv2, idw2 = 13:15, 16:18, 19:21, 22:24
 
-    return vcat(p_new, q_new, v_new, w_new)
+    dq1 = dx[4:6]; qref = xref[iq]
+    dq2 = dx[4:6]; q2ref = xref[iq2]
+
+    q1 = params(add_error(UnitQuaternion(xref[iq1]),
+                          RotationError(SVector{3}(dx[idq1]), CayleyMap())))
+    q2 = params(add_error(UnitQuaternion(xref[iq1]),
+                          RotationError(SVector{3}(dx[idq1]), CayleyMap())))
+
+    return [xref[ip1] + dx[idp1]; q1; xref[iv1] + dx[idv1]; xref[iw1] + dx[idw1];
+            xref[ip2] + dx[idp2]; q2; xref[iv2] + dx[idv2]; xref[iw2] + dx[idw2]]
 end
-
-function attitude_jacobian(q)
-    q̂ = [ 0    -q[4]  q[3];
-          q[4]  0    -q[2];
-         -q[3]  q[2]  0]
-    return SMatrix{4,3}(vcat(-q[2:end]', q[1] * I(3) + q̂))
-end
-
 
 function state_error_jacobian(x)
-    ip, iq, iv, iw = 1:3, 4:7, 8:10, 11:13
-    q = x[iq]
-    M = blockdiag(sparse(I(3)),
-                  sparse(attitude_jacobian(q)),
-                  sparse(I(6)))
+    ip1, iq1, iv1, iw1 =  1:3,   4:7,   8:10, 11:13
+    ip2, iq2, iv2, iw2 = 14:16, 17:20, 21:23, 24:26
 
+    q1 = x[iq1]; q2 = x[iq2]
+    M = blockdiag(sparse(∇differential(UnitQuaternion(q1))),
+                  sparse(I(3)),
+                  sparse(∇differential(UnitQuaternion(q2))),
+                  sparse(I(3)))
     return Matrix(M)
 end

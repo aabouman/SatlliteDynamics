@@ -1,6 +1,5 @@
 using OSQP
 using SparseArrays
-using LinearAlgebra
 using Rotations
 
 earthRadius = 6.37814  # Megameters
