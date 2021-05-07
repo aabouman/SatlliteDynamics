@@ -1,3 +1,4 @@
+using Plots
 include("dynamics.jl")
 include("MPC.jl");
 
@@ -6,18 +7,25 @@ n = 12; m = 6;
 N = 10000; δt = 0.001;
 
 xₛₜ_init = [6.371, 0, 0, 1., 0, 0, 0, 0, 15.44, 0, 0, 0, 0,
-           7, 0, 0, 1., 0, 0, 0, 0, .1, 0, 0, 0, 0]
+           1, 0, 0, 1., 0, 0, 0, 0, .1, 0, 0, 0, 0]
 roll = rollout(xₛₜ_init, [zeros(6) for _ in 1:N], δt);
 
-# %%
-using Plots
 x1s = [roll[i][1] for i in 1:length(roll)]
 y1s = [roll[i][2] for i in 1:length(roll)]
 x2s = [roll[i][14] for i in 1:length(roll)]
 y2s = [roll[i][15] for i in 1:length(roll)]
 
+xₛₜ_init2 = [7.371, 0, 0, 1., 0, 0, 0, 0, 15.54, 0, 0, 0, 0,
+           0, 0, 0, 1., 0, 0, 0, 0, 0, 0, 0, 0, 0]
+roll2 = rollout(xₛₜ_init2, [zeros(6) for _ in 1:N], δt);
+
+x3s = [roll2[i][1] for i in 1:length(roll)];
+y3s = [roll2[i][2] for i in 1:length(roll)];
+
+# %%
 plot(x1s,y1s)
 plot!(x1s+x2s, y1s+y2s)
+plot!(x3s, y3s)
 
 # %%
 n = 12; m = 6;
