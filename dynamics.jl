@@ -1,5 +1,5 @@
 using LinearAlgebra: normalize, norm, ×, I
-using Rotations: RotMatrix, UnitQuaternion, RotXYZ, RotationError, params
+using Rotations: RotMatrix, UnitQuaternion, RotXYZ, RotationError, params, hmat, rmult, lmult
 using Rotations: CayleyMap, add_error, rotation_error, kinematics, ∇differential
 using ForwardDiff
 using StaticArrays
@@ -11,6 +11,7 @@ J꜀ = [1  0  0;
       0  1  0;
       0  0  1];
 mₜ = 419.709;
+m꜀ = 419.709;
 mₛ = 5.972e21;
 G = 8.6498928e-19;
 
@@ -59,7 +60,7 @@ function dynamics(x::SVector{26}, u::SVector{6})
 #                           Chaser Dyanmics
 # =========================================================================== #
     # Chaser rotational dynamics written in chaser frame
-    ω̇ₛ꜀ᶜ = J꜀ \ (-ωₛ꜀ᶜ × (J꜀ * ωₛ꜀ᶜ))            # Body velocity dynamics
+    ω̇ₛ꜀ᶜ = J꜀ \ (𝜏꜀ - ωₛ꜀ᶜ × (J꜀ * ωₛ꜀ᶜ))            # Body velocity dynamics
     # Chaser rotational kinematics written in spatial frame
     q̇ₛ꜀ˢ = kinematics(UnitQuaternion(qₛ꜀ˢ), ωₛ꜀ᶜ)  # Quaternion kinematics
 
@@ -68,7 +69,7 @@ function dynamics(x::SVector{26}, u::SVector{6})
     pₛ꜀ᵗ = pₛₜᵗ + pₜ꜀ᵗ
     vₛ꜀ᵗ = vₛₜᵗ + vₜ꜀ᵗ
     ṗₛₜᵗ = vₛₜᵗ
-    ṗₛ꜀ᵗ = (-ωₛₜᵗ × pₛ꜀ᵗ) + Rₜ꜀ * vₛ꜀ᵗ
+    ṗₛ꜀ᵗ = (-ωₛₜᵗ × pₛ꜀ᵗ) + vₛ꜀ᵗ
     # Chaser translational kinematics written in target frame
     ṗₜ꜀ᵗ = ṗₛ꜀ᵗ - ṗₛₜᵗ
 
@@ -76,7 +77,7 @@ function dynamics(x::SVector{26}, u::SVector{6})
     pₛ꜀ˢ = Rₛₜ * pₛ꜀ᵗ
     vₛ꜀ˢ = Rₛₜ * vₛ꜀ᵗ
     vₛ꜀ᶜ = R꜀ₜ * vₛ꜀ᵗ
-    v̇ₛ꜀ᶜ = R꜀ₛ * (-(G * mₛ)/norm(pₛ꜀ˢ)^3 * pₛ꜀ˢ) - ωₛ꜀ᶜ × vₛ꜀ᶜ
+    v̇ₛ꜀ᶜ = R꜀ₛ * (-G * mₛ * pₛ꜀ˢ / norm(pₛ꜀ˢ)^3) + 𝑓꜀ / m꜀ - ωₛ꜀ᶜ × vₛ꜀ᶜ
     Ṙₛₜ = hmat()' * (lmult(SVector{4}(q̇ₛₜˢ)) * rmult(SVector{4}(qₛₜˢ))' +
                     lmult(SVector{4}(qₛₜˢ)) * rmult(SVector{4}(q̇ₛₜˢ))') * hmat()
     Ṙₛ꜀ = hmat()' * (lmult(SVector{4}(q̇ₛ꜀ˢ)) * rmult(SVector{4}(qₛ꜀ˢ))' +
