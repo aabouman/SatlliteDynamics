@@ -12,7 +12,7 @@ n = size(Q)[1]; m = size(R)[1];
 Np = (N-1)*(n-2+m)
 Nd = (N-1)*(n-2)
 
-num_steps = 1000
+num_steps = 500
 
 ctrl = OSQPController(Q, R, Qf, δt, N, Np, Nd);
 
@@ -35,7 +35,7 @@ using CSV
 
 tmp = DataFrame(hcat(x_hist...)', ["q_cw", "q_cx", "q_cy", "q_cz", "w_cx", "w_cy", "w_cz",
                                    "q_tw", "q_tx", "q_ty", "q_tz", "w_tx", "w_ty", "w_tz"]);
-CSV.write("x_hist.csv", tmp)
+CSV.write("x_hist_rot.csv", tmp)
 
 # %%
 using Plots
@@ -44,14 +44,20 @@ plot([1:length(cost_hist);], cost_hist, title="Orientation + Angular Velocity Co
 savefig("graphics/rotation_cost.png")
 
 # %%
-plot([x_hist[i][7] for i in 1:length(x_hist)])
-plot!([x_hist[i][14] for i in 1:length(x_hist)])
+plot([x_hist[i][7] for i in 1:length(x_hist)], title = "MPC: Angular Velocity" , label = "chaser" , line = (2, :dash, [:blue]), legendfontsize=10)
+plot!([x_hist[i][14] for i in 1:length(x_hist)], label = "target" , lw = 2 , line = (2, [:blue]),  ylabel = "Angular Velocity [rad/hr]" , xlabel = "timestep")
+savefig("graphics/MPC_angular_velocity.png")
 
 # %%
-plot([x_hist[i][8] for i in 1:length(x_hist)])
-plot!([x_hist[i][11] for i in 1:length(x_hist)])
-plot!([x_hist[i][1] for i in 1:length(x_hist)])
-plot!([x_hist[i][4] for i in 1:length(x_hist)])
+plot([x_hist[i][8] for i in 1:length(x_hist)] , title= "MPC: Orientation", label="chaser_q1" ,line = (2, :dash, [:blue]), legendfontsize=10)
+plot!([x_hist[i][9] for i in 1:length(x_hist)] , line = (2, :dash, :red) , label="chaser_q2" , legend=:bottomleft)
+plot!([x_hist[i][10] for i in 1:length(x_hist)] , line = (2, :dash, :green) , label="chaser_q3")
+plot!([x_hist[i][11] for i in 1:length(x_hist)] , line = (2, :dash, :black) , label="chaser_q4")
+plot!([x_hist[i][1] for i in 1:length(x_hist)] , line = (2, "blue") , label="target_q1")
+plot!([x_hist[i][2] for i in 1:length(x_hist)], line = (2, "red") , label="target_q2")
+plot!([x_hist[i][3] for i in 1:length(x_hist)] , line = (2, "green") , label="target_q3")
+plot!([x_hist[i][4] for i in 1:length(x_hist)] , line = (2, "black") , label="target_q4" , xlabel="timestep" , ylabel="Quaternions")
+savefig("graphics/MPC_orientation.png")
 
 # %%
 x_hist[end][1:4]
