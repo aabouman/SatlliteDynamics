@@ -35,15 +35,17 @@ num_steps = 1000
 Np = (N-1)*(n-2+m)
 Nd = (N-1)*(n-2)
 
-Q = Matrix(Diagonal([1.,1,1, 1,1,1,1, 1,1,1, 1,1,1,
-                     1.,1,1, 1,1,1,1, 1,1,1, 1,1,1])) * 1.
+Q = Matrix(Diagonal([1.,1,1, 2,2,2,2, 1,1,1, 1,1,1,
+                     1.,1,1, 2,2,2,2, 1,1,1, 1,1,1])) * 1.
 R = Matrix(Diagonal([1.,1,1,1,1,1])) * .1
-Q = Matrix(Diagonal([1.,1,1, 1,1,1,1, 1,1,1, 1,1,1,
-                     1.,1,1, 1,1,1,1, 1,1,1, 1,1,1])) * 10.
+Qf = Matrix(Diagonal([1.,1,1, 2,2,2,2, 1,1,1, 1,1,1,
+                      1.,1,1, 2,2,2,2, 1,1,1, 1,1,1])) * 10.
 
 ctrl = OSQPController(Q, R, Qf, δt, N, Np, Nd);
 
+
 # %%
+using LinearAlgebra: det
 include("MPC.jl");
 
 x_init1 = [6.371, 0, 0, 1., 0, 0, 0, 0, 15.44, 0, 0, 0, 0,
@@ -56,3 +58,9 @@ using Plots
 plot([1:length(cost_hist);], cost_hist, title="Orientation + Angular Velocity Cost",
      xlabel="Simulation Step", legend=false, size=(1000, 666), yaxis=:log)
 # savefig("graphics/rotation_cost.png")
+
+# %%
+[discreteJacobian(x_init1, rand(6), δt)[1]
+
+# %%
+x

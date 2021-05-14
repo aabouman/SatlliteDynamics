@@ -99,13 +99,22 @@ function buildQP!(ctrl::MPCController{OSQP.Model}, X, U)
                    0,0,0, 1,1,1,1, 0,0,0, 0,0,0])
     Iq = Diagonal(SA[0,0,0, 1,1,1, 0,0,0, 0,0,0,
                      0,0,0, 1,1,1, 0,0,0, 0,0,0])
+    ip1, iq1, iv1, iw1 =  1:3,   4:7,   8:10, 11:13
+    ip2, iq2, iv2, iw2 = 14:16, 17:20, 21:23, 24:26
+    i𝑓, i𝜏 = 1:3, 4:6
 
-    q = [[ctrl.R * (U[i] - ctrl.Uref[i]) ; ctrl.Q * (X[i+1] - ctrl.Xref[i+1])]
+    # Construct specific translation/rotational
+    X_tmp1 = [[X[i][ip1]; X[i][iq1]; X[i][iv1]; X[i][iw1];
+               zeros(3);  X[i][iq2]; zeros(3);  X[i][iw2]]  - ctrl.Xref[i]
+              for i = 1:N]
+    U_tmp1 = [[zeros(3); U[i][i𝜏]] - ctrl.Uref[i]
+             for i = 1:N-1]
+
+    q = [[ctrl.R * U_tmp1[i]; ctrl.Q * X_tmp1[i+1]]
          for i in 1:N-1]
-    q[end][m+1:end] .= ctrl.Qf * (X[end] - ctrl.Xref[end]) # Overwriting the last value
+    q[end][m+1:end] .= ctrl.Qf * X_tmp1[end]  # Overwriting the last value
     qtilde = [blockdiag(sparse(I(m)), sparse(state_error_jacobian(X[i])')) * q[i]
               for i in 1:N-1]
-
     # Building the Cost linear term
     ctrl.q .= vcat(qtilde...)
 
@@ -118,11 +127,18 @@ function buildQP!(ctrl::MPCController{OSQP.Model}, X, U)
     ctrl.P .= blockdiag([blockdiag(sparse(ctrl.R), sparse(Qtilde[i])) for i=1:N-1]...)
 
     # Computing the Dynamics constraints
+
+    # TAKEN WRT X_TMP
+    X_tmp2 = [[ctrl.Xref[i][ip1]; ctrl.Xref[i][iq1]; ctrl.Xref[i][iv1]; ctrl.Xref[i][iw1];
+               zeros(3);          ctrl.Xref[i][iq2]; zeros(3);          ctrl.Xref[i][iw2]]
+              for i = 1:N]
+    U_tmp2 = [[zeros(3); ctrl.Uref[i][i𝜏]] for i = 1:N-1]
+
     A = [state_error_jacobian(X[i+1])' *
-         discreteJacobian(ctrl.Xref[i], ctrl.Uref[i], ctrl.δt)[1] *
+         discreteJacobian(X_tmp2[i], U_tmp2[i], ctrl.δt)[1] *
          state_error_jacobian(X[i]) for i in 1:N-1]
     B = [state_error_jacobian(X[i+1])' *
-         discreteJacobian(ctrl.Xref[i], ctrl.Uref[i], ctrl.δt)[2] for i in 1:N-1]
+         discreteJacobian(X_tmp2[i], U_tmp2[i], ctrl.δt)[2] for i in 1:N-1]
 
     dynConstMat = blockdiag([sparse([B[i]  -I(n)]) for i in 1:(N-1)]...)
     dynConstMat += blockdiag(spzeros(n, m),
@@ -132,9 +148,14 @@ function buildQP!(ctrl::MPCController{OSQP.Model}, X, U)
     # Concatenate the dynamics constraints and the earth radius constraint
     ctrl.C .= vcat(dynConstMat)
 
+    println("The determinate of the KKT condition matrix: ",
+            det([ctrl.P  ctrl.C';
+                 ctrl.C  zeros(size(ctrl.C)[1], size(ctrl.C)[1])])
+             )
+
     # Compute the equality constraints
-    dynConstlb = vcat(-A[1] * state_error(X[1], ctrl.Xref[1]), zeros((N-2)*n))
-    dynConstub = vcat(-A[1] * state_error(X[1], ctrl.Xref[1]), zeros((N-2)*n))
+    dynConstlb = vcat(-A[1] * state_error(X_tmp1[1], ctrl.Xref[1]), zeros((N-2)*n))
+    dynConstub = vcat(-A[1] * state_error(X_tmp1[1], ctrl.Xref[1]), zeros((N-2)*n))
 
     # Concatenate the dynamics constraints and earth radius constraint bounds
     ctrl.lb .= vcat(dynConstlb)
@@ -164,9 +185,11 @@ function stateInterpolate_CW(x_init::Vector, N::Int64, δt::Real)
 
     # Build the reference trajectory for the chaser's orientaiton and angular
     # velocity. This is just the trajectory of the target
-    p2s = range(p2, zeros(3), length=N)
+    # p2s = range(p2, zeros(3), length=N)
+    p2s = [zeros(3) for i in 1:N]
     q2s = deepcopy(q1s)
-    v2s = range(v2, zeros(3), length=N)
+    # v2s = range(v2, zeros(3), length=N)
+    v2s = [zeros(3) for i in 1:N]
     w2s = deepcopy(w1s)
 
     return [[p1s[i]; q1s[i]; v1s[i]; w1s[i];
