@@ -151,6 +151,19 @@ function state_error(x::Vector, xref::Vector)
     return dx
 end
 
+function state_error_half(x::Vector, xref::Vector)
+    ip1, iq1, iv1, iw1 =  1:3,   4:7,   8:10, 11:13
+    #ip2, iq2, iv2, iw2 = 14:16, 17:20, 21:23, 24:26
+
+    q1 = x[iq1]; q1ref = xref[iq1]
+    q1e = Vector(rotation_error(UnitQuaternion(q1),
+                                UnitQuaternion(q1ref),
+                                CayleyMap()))
+
+    dx = [x[ip1] - xref[ip1]; q1e; x[iv1] - xref[iv1]; x[iw1] - xref[iw1]]
+    return dx
+end
+
 
 function state_error_inv(xref::Vector, dx::Vector)
     ip1, iq1, iv1, iw1 =  1:3,   4:7,   8:10, 11:13
