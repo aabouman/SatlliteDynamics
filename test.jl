@@ -9,7 +9,7 @@ n = 12; m = 6;
 N = 10000; δt = 0.001;
 
 x_init1 = [6.371, 0, 0, 1., 0, 0, 0, 0, 15.44, 0, 0, 0, 3,
-           1, 0, 0, 1., 0, 0, 0, 0, .1, 0, 0, 0, 0]
+           7.371, 0, 0, 1., 0, 0, 0, 0, 15.1, 0, 0, 0, 1]
 roll1 = rollout(x_init1, [zeros(6) for _ in 1:N], δt);
 
 NRG_target = systemEnergy.(roll1)
@@ -24,19 +24,15 @@ q1s = [roll1[i][4] for i in 1:length(roll1)]
 q2s = [roll1[i][5] for i in 1:length(roll1)]
 q3s = [roll1[i][6] for i in 1:length(roll1)]
 q4s = [roll1[i][7] for i in 1:length(roll1)]
+vx1s = [roll1[i][8] for i in 1:length(roll1)]
+vy1s = [roll1[i][9] for i in 1:length(roll1)]
 
 x2s = [roll1[i][14] for i in 1:length(roll1)]
 y2s = [roll1[i][15] for i in 1:length(roll1)]
-
-vx1s = [roll1[i][8] for i in 1:length(roll1)]
-vy1s = [roll1[i][9] for i in 1:length(roll1)]
 vx2s = [roll1[i][14] for i in 1:length(roll1)]
 vy2s = [roll1[i][15] for i in 1:length(roll1)]
 
 wz1s = [roll1[i][13] for i in 1:length(roll1)]
-# vy1s = [roll1[i][2] for i in 1:length(roll1)]
-# vx2s = [roll1[i][14] for i in 1:length(roll1)]
-# vy2s = [roll1[i][15] for i in 1:length(roll1)]
 
 x_init2 = [7.371, 0, 0, 1., 0, 0, 0, 0, 15.54, 0, 0, 0, 3,
            0, 0, 0, 1., 0, 0, 0, 0, 0, 0, 0, 0, 0]
@@ -47,8 +43,11 @@ y3s = [roll2[i][2] for i in 1:length(roll1)];
 vx3s = [roll2[i][1] for i in 1:length(roll1)];
 vy3s = [roll2[i][2] for i in 1:length(roll1)];
 
-# %% plotting positions
-# plot(x1s,y1s, legend=false)
+# %% px vs py
+plot(x1s,y1s, legend=false)
+# %% vx vs vy
+plot(vx1s,vy1s, legend=false)
+# %% position and velocity wrt time
 plot(x1s)
 plot!(y1s)
 plot!(vx1s)
@@ -67,21 +66,16 @@ plot!(q4s)
 vx2s = [roll1[i][21] for i in 1:length(roll1)]
 vy2s = [roll1[i][22] for i in 1:length(roll1)]
 plot(vx2s,vy2s)
-# %% plotting velocities separately
-plot(vx1s)
-plot!(vy1s)
-#plot!(vx1s+vx2s, vy1s+vy2s)
-#plot!(vx3s, vy3s)
-#plot!(vx2s, vy2s)
 # %%
 plot(wz1s)
 
 # %%
 using LinearAlgebra: Diagonal
+include("MPC.jl");
 
 n = 13; m = 6;
-N = 50; δt = 0.001;
-num_steps = 70
+N = 100; δt = 0.001;
+num_steps = 1500
 Np = (N-1)*(n-1+m)
 Nd = (N-1)*(n-1)
 
@@ -91,9 +85,9 @@ Nd = (N-1)*(n-1)
 # Qf = Matrix(Diagonal([1.,1,1, 2,2,2,2, 1,1,1, 1,1,1,
 #                       1.,1,1, 2,2,2,2, 1,1,1, 1,1,1])) * 10.
 
-Q = Matrix(Diagonal([1.,1,1, .2,.2,.2,.2, 1,1,1, 1,1,1])) * 1.
-R = Matrix(Diagonal([1.,1,1,1,1,1])) * .01
-Qf = Matrix(Diagonal([1.,1,1, .2,.2,.2,.2, 1,1,1, 1,1,1])) * 10.
+Q = Matrix(Diagonal([5.,5,5, 1,1,1,1, 5,5,5, 2,2,2])) * 1.
+R = Matrix(Diagonal([1.,1,1,1,1,1])) * .1
+Qf = Matrix(Diagonal([5.,5,5,  1,1,1,1, 5,5,5, 1,1,1])) * 10.
 
 
 ctrl = OSQPController(Q, R, Qf, δt, N, Np, Nd);
@@ -108,13 +102,14 @@ earthRadius = 6.371;    # Radius of earth Megameters
 orbitRadius = earthRadius + 1.0
 μ = sqrt(G * mₛ / ((orbitRadius)^3))    # radians / hour
 
-include("MPC.jl");
 
 x_init1 = [6.371, 0, 0, 1., 0, 0, 0, 0, 15.44, 0, 0, 0, μ,
-           7.371,     0, 0, 1., 0, 0, 0, 0,   15.54,  0, 0, 0, 0]
+           7.371,     0, 0, 1., 0, 0, 0, 0,   15.54,  0, 0, 0, 1]
 
 x_hist, u_hist, cost_hist = simulate(ctrl, x_init1; num_steps=num_steps, verbose=false);
 
+# %%
+u_hist[end-1]
 # %%
 using Plots
 plot([1:length(cost_hist);], cost_hist, title="Cost",
@@ -122,28 +117,33 @@ plot([1:length(cost_hist);], cost_hist, title="Cost",
 # savefig("graphics/rotation_cost.png")
 
 # %%
-plot([x_hist[i][1] for i = 1:length(x_hist)], title="relative position of chaser wrt target",
-     xlabel="Simulation Step", legend=true, size=(500, 400) , label = "chaser-x")
+plot([x_hist[i][1] for i = 1:length(x_hist)], title="position",
+     xlabel="Simulation Step", legend=true, size=(500, 400), line=(2, "red") , label = "target-x")
 plot!([x_hist[i][2] for i = 1:length(x_hist)],
-      xlabel="Simulation Step", legend=true, size=(500, 400) , label = "chaser-y")
+      xlabel="Simulation Step", legend=true, size=(500, 400), line=(2, "blue") , label = "target-y")
 plot!([x_hist[i][3] for i = 1:length(x_hist)],
-   xlabel="Simulation Step", legend=true, size=(500, 400) , label = "chaser-z")
-
-# %% Positon error plots
-plot([x_hist[i][14] for i = 1:length(x_hist)], title="relative position of chaser wrt target",
-     xlabel="Simulation Step", legend=true, size=(500, 400) , label = "chaser-x")
+   xlabel="Simulation Step", legend=true, size=(500, 400) , line=(2, "black") ,label = "target-z")
+plot!([x_hist[i][14] for i = 1:length(x_hist)],
+    xlabel="Simulation Step", legend=true, size=(500, 400) , line = (2, :dash, "red"), label = "chaser-x")
 plot!([x_hist[i][15] for i = 1:length(x_hist)],
-      xlabel="Simulation Step", legend=true, size=(500, 400) , label = "chaser-y")
+     xlabel="Simulation Step", legend=true, size=(500, 400) , line = (2, :dash, "blue"), label = "chaser-y")
 plot!([x_hist[i][16] for i = 1:length(x_hist)],
-   xlabel="Simulation Step", legend=true, size=(500, 400) , label = "chaser-z")
+  xlabel="Simulation Step", legend=true, size=(500, 400) ,line = (2, :dash, "black")  , label = "chaser-z")
+
 
 # %% Velocity error Plots
-plot([x_hist[i][21] for i = 1:length(x_hist)], title="relative velocity of chaser wrt target",
-     xlabel="Simulation Step", legend=true, size=(500, 400) , label = "chaser-x")
+plot([x_hist[i][8] for i = 1:length(x_hist)], title="velocity",
+     xlabel="Simulation Step", size=(500, 400), line=(2, "red") , label = "target-x", legend=true)
+plot!([x_hist[i][9] for i = 1:length(x_hist)],
+      xlabel="Simulation Step", legend=true, size=(500, 400), line=(2, "blue") , label = "target-y")
+plot!([x_hist[i][10] for i = 1:length(x_hist)],
+   xlabel="Simulation Step", legend=true, size=(500, 400) , line=(2, "black") ,label = "target-z")
+plot!([x_hist[i][21] for i = 1:length(x_hist)],
+    xlabel="Simulation Step", legend=true, size=(500, 400) , line = (2, :dash, "red"), label = "chaser-x")
 plot!([x_hist[i][22] for i = 1:length(x_hist)],
-      xlabel="Simulation Step", legend=true, size=(500, 400) , label = "chaser-y")
+     xlabel="Simulation Step", legend=true, size=(500, 400) , line = (2, :dash, "blue"), label = "chaser-y")
 plot!([x_hist[i][23] for i = 1:length(x_hist)],
-   xlabel="Simulation Step", legend=true, size=(500, 400) , label = "chaser-z")
+  xlabel="Simulation Step", size=(500, 400) ,line = (2, :dash, "black")  , label = "chaser-z", legend=:bottomleft)
 
 
 # %%
@@ -158,9 +158,9 @@ plot!([x_hist[i][7] for i in 1:length(x_hist)] , line = (2, "black") , label="ta
 # savefig("graphics/MPC_orientation.png")
 # %% Angular velocity plot
 plot([x_hist[i][13] for i = 1:length(x_hist)], title="relative velocity of chaser wrt target",
-     xlabel="Simulation Step", size=(500, 400) , label = "target-ωz")
+     xlabel="Simulation Step", size=(500, 400), line=(2, "red") , label = "target-ωz")
 plot!([x_hist[i][26] for i = 1:length(x_hist)],
-      xlabel="Simulation Step", size=(500, 400) , label = "chaser-ωz" )
+      xlabel="Simulation Step", size=(500, 400), line=(2, :dash, "red") , label = "chaser-ωz" )
 
 # %%
 u_hist
