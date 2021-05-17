@@ -133,6 +133,19 @@ function rollout(x0::Vector, Utraj::Vector, δt::Real)
 end
 
 
+function systemEnergy(x::Vector)
+    pₛₜˢ = x[1:3]
+    qₛₜˢ = x[4:7]
+    vₜᵗ = x[8:10]
+    ωₜᵗ = x[11:13]
+
+    NRG_target = mₜ/2 * vₜᵗ' * vₜᵗ + (1/2)*(ωₜᵗ' * Jₜ * ωₜᵗ) - (G*mₛ*mₜ/norm(pₛₜˢ))
+
+    return NRG_target
+
+end
+
+
 function state_error(x::Vector, xref::Vector)
     ip1, iq1, iv1, iw1 =  1:3,   4:7,   8:10, 11:13
     ip2, iq2, iv2, iw2 = 14:16, 17:20, 21:23, 24:26
