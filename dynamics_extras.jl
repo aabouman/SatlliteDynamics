@@ -25,6 +25,18 @@ function dynamics(x::Vector, u::Vector)
     dynamics(xStatic, uStatic)
 end
 
+function dynamics_v2(x::Vector, u::Vector)
+    xStatic = SVector{length(x)}(x)
+    uStatic = SVector{length(u)}(u)
+    dynamics(xStatic, uStatic)
+end
+
+function dynamics_v3(x::Vector, u::Vector)
+    xStatic = SVector{length(x)}(x)
+    uStatic = SVector{length(u)}(u)
+    dynamics(xStatic, uStatic)
+end
+
 function dynamics_v4(x::Vector, u::Vector)
     xStatic = SVector{length(x)}(x)
     uStatic = SVector{length(u)}(u)
@@ -71,6 +83,7 @@ function dynamics_v4(x::SVector{num_states}, u::SVector{num_inputs})
     return [p_st_s_dot; q_st_s_dot; v_st_s_dot; ω_t_t_dot;
             p_sc_s_dot; q_sc_s_dot; v_sc_s_dot; ω_c_c_dot]
 end
+
 
 function dynamics(x::SVector{num_states}, u::SVector{num_inputs})
     pₛₜˢ = @SVector [x[1], x[2], x[3]]
@@ -121,6 +134,147 @@ function dynamics(x::SVector{num_states}, u::SVector{num_inputs})
     # Chaser translational kinematics written in target frame
     # ṗₜ꜀ᵗ = ṗₛ꜀ᵗ - ṗₛₜᵗ
     ṗₜ꜀ᵗ = (-ωₛₜᵗ × pₜ꜀ᵗ) + (vₛ꜀ᵗ - vₛₜᵗ)
+
+    # Useful definitions
+    pₛ꜀ˢ = Rₛₜ * pₛ꜀ᵗ
+    vₛ꜀ˢ = Rₛₜ * vₛ꜀ᵗ
+    vₛ꜀ᶜ = R꜀ₜ * vₛ꜀ᵗ
+    v̇ₛ꜀ᶜ = R꜀ₛ * (-G * mₛ * pₛ꜀ˢ / norm(pₛ꜀ˢ)^3) + 𝑓꜀ / m꜀ - ωₛ꜀ᶜ × vₛ꜀ᶜ
+    Ṙₛₜ = hmat()' * (lmult(SVector{4}(q̇ₛₜˢ)) * rmult(SVector{4}(qₛₜˢ))' +
+                    lmult(SVector{4}(qₛₜˢ)) * rmult(SVector{4}(q̇ₛₜˢ))') * hmat()
+    Ṙₛ꜀ = hmat()' * (lmult(SVector{4}(q̇ₛ꜀ˢ)) * rmult(SVector{4}(qₛ꜀ˢ))' +
+                     lmult(SVector{4}(qₛ꜀ˢ)) * rmult(SVector{4}(q̇ₛ꜀ˢ))') * hmat()
+    Ṙₜ꜀ = ((Ṙₛₜ)' * Rₛ꜀ + (Rₛₜ)' * Ṙₛ꜀)
+    v̇ₛ꜀ᵗ = Ṙₜ꜀ * vₛ꜀ᶜ + Rₜ꜀ * v̇ₛ꜀ᶜ
+    # Chaser translational dynamics written in target frame
+    v̇ₜ꜀ᵗ = v̇ₛ꜀ᵗ - v̇ₛₜᵗ
+
+    return [ṗₛₜˢ; q̇ₛₜˢ; v̇ₛₜᵗ; ω̇ₛₜᵗ;
+            ṗₜ꜀ᵗ; q̇ₛ꜀ˢ; v̇ₜ꜀ᵗ; ω̇ₛ꜀ᶜ]
+end
+
+function dynamics_v2(x::SVector{num_states}, u::SVector{num_inputs})
+    pₛₜˢ = @SVector [x[1], x[2], x[3]]
+    qₛₜˢ = normalize(@SVector [x[4], x[5], x[6], x[7]])
+    vₜᵗ = @SVector [x[8], x[9], x[10]]
+    ωₜᵗ = @SVector [x[11], x[12], x[13]]
+
+    pₜ꜀ᵗ = @SVector [x[14], x[15], x[16]]
+    qₛ꜀ˢ = normalize(@SVector [x[17], x[18], x[19], x[20]])
+    vₜ꜀ᵗ = @SVector [x[21], x[22], x[23]]
+    ωₛ꜀ᶜ = @SVector [x[24], x[25], x[26]]
+
+    𝑓꜀ = @SVector [u[1], u[2], u[3]]
+    𝜏꜀ = @SVector [u[4], u[5], u[6]]
+
+    # Building helpful rot matricies
+    Rₛₜ = RotMatrix(UnitQuaternion(qₛₜˢ))
+    Rₛ꜀ = RotMatrix(UnitQuaternion(qₛ꜀ˢ))
+    Rₜₛ = inv(Rₛₜ)
+    R꜀ₛ = inv(Rₛ꜀)
+    Rₜ꜀ = Rₜₛ * Rₛ꜀
+    R꜀ₜ = R꜀ₛ * Rₛₜ
+
+# =========================================================================== #
+#                           Target Dyanmics
+# =========================================================================== #
+    # Target Rotational Dynamics written in target frame
+    ω̇ₛₜᵗ = Jₜ \ (-ωₛₜᵗ × (Jₜ * ωₛₜᵗ))            # Body velocity dynamics
+    q̇ₛₜˢ = kinematics(UnitQuaternion(qₛₜˢ), ωₛₜᵗ)  # Quaternion kinematics
+    # Target Translational Dynamics written in spatial frame
+    ṗₛₜˢ = Rₛₜ * vₜᵗ + Rₛₜ*skew(ωₜᵗ)*Rₜₛ*pₛₜˢ
+
+    #helpful term
+    w_tmp = Rₜₛ* skew(skew(ωₛₜᵗ)*Rₛₜ*ωₛₜᵗ)
+    println("w_tmp = " , w_tmp)
+    w = skew(skew(ωₛₜᵗ)*Rₛₜ*ωₛₜᵗ + Rₛₜ*ω̇ₛₜᵗ)
+    v̇ₛₜᵗ = Rₜₛ * (-(G * mₛ)/norm(pₛₜˢ)^3 * pₛₜˢ) - ωₛₜᵗ × vₛₜᵗ - Rₜₛ*w*pₛₜˢ - skew(ωₛₜᵗ)*Rₜₛ*ṗₛₜˢ
+
+# =========================================================================== #
+#                           Chaser Dyanmics
+# =========================================================================== #
+    # Chaser rotational dynamics written in chaser frame
+    ω̇ₛ꜀ᶜ = J꜀ \ (𝜏꜀ - ωₛ꜀ᶜ × (J꜀ * ωₛ꜀ᶜ))            # Body velocity dynamics
+    # Chaser rotational kinematics written in spatial frame
+    q̇ₛ꜀ˢ = kinematics(UnitQuaternion(qₛ꜀ˢ), ωₛ꜀ᶜ)  # Quaternion kinematics
+
+    # Useful definitions
+    pₛₜᵗ = Rₜₛ * pₛₜˢ
+    pₛ꜀ᵗ = pₛₜᵗ + pₜ꜀ᵗ
+    vₛ꜀ᵗ = vₛₜᵗ + vₜ꜀ᵗ
+    ṗₛₜᵗ = vₛₜᵗ
+    ṗₛ꜀ᵗ = (-ωₛₜᵗ × pₛ꜀ᵗ) + vₛ꜀ᵗ
+    # Chaser translational kinematics written in target frame
+    ṗₜ꜀ᵗ = ṗₛ꜀ᵗ - ṗₛₜᵗ
+
+    # Useful definitions
+    pₛ꜀ˢ = Rₛₜ * pₛ꜀ᵗ
+    vₛ꜀ˢ = Rₛₜ * vₛ꜀ᵗ
+    vₛ꜀ᶜ = R꜀ₜ * vₛ꜀ᵗ
+    v̇ₛ꜀ᶜ = R꜀ₛ * (-G * mₛ * pₛ꜀ˢ / norm(pₛ꜀ˢ)^3) + 𝑓꜀ / m꜀ - ωₛ꜀ᶜ × vₛ꜀ᶜ
+    Ṙₛₜ = hmat()' * (lmult(SVector{4}(q̇ₛₜˢ)) * rmult(SVector{4}(qₛₜˢ))' +
+                    lmult(SVector{4}(qₛₜˢ)) * rmult(SVector{4}(q̇ₛₜˢ))') * hmat()
+    Ṙₛ꜀ = hmat()' * (lmult(SVector{4}(q̇ₛ꜀ˢ)) * rmult(SVector{4}(qₛ꜀ˢ))' +
+                     lmult(SVector{4}(qₛ꜀ˢ)) * rmult(SVector{4}(q̇ₛ꜀ˢ))') * hmat()
+    Ṙₜ꜀ = ((Ṙₛₜ)' * Rₛ꜀ + (Rₛₜ)' * Ṙₛ꜀)
+    v̇ₛ꜀ᵗ = Ṙₜ꜀ * vₛ꜀ᶜ + Rₜ꜀ * v̇ₛ꜀ᶜ
+    # Chaser translational dynamics written in target frame
+    v̇ₜ꜀ᵗ = v̇ₛ꜀ᵗ - v̇ₛₜᵗ
+
+    return [ṗₛₜˢ; q̇ₛₜˢ; v̇ₛₜᵗ; ω̇ₛₜᵗ;
+            ṗₜ꜀ᵗ; q̇ₛ꜀ˢ; v̇ₜ꜀ᵗ; ω̇ₛ꜀ᶜ]
+end
+
+function dynamics_v3(x::SVector{num_states}, u::SVector{num_inputs})
+    pₛₜˢ = @SVector [x[1], x[2], x[3]]
+    qₛₜˢ = normalize(@SVector [x[4], x[5], x[6], x[7]])
+    vₜᵗ = @SVector [x[8], x[9], x[10]]
+    ωₜᵗ = @SVector [x[11], x[12], x[13]]
+
+    pₜ꜀ᵗ = @SVector [x[14], x[15], x[16]]
+    qₛ꜀ˢ = normalize(@SVector [x[17], x[18], x[19], x[20]])
+    vₜ꜀ᵗ = @SVector [x[21], x[22], x[23]]
+    ωₛ꜀ᶜ = @SVector [x[24], x[25], x[26]]
+
+    𝑓꜀ = @SVector [u[1], u[2], u[3]]
+    𝜏꜀ = @SVector [u[4], u[5], u[6]]
+
+    # Building helpful rot matricies
+    Rₛₜ = RotMatrix(UnitQuaternion(qₛₜˢ))
+    Rₛ꜀ = RotMatrix(UnitQuaternion(qₛ꜀ˢ))
+    Rₜₛ = inv(Rₛₜ)
+    R꜀ₛ = inv(Rₛ꜀)
+    Rₜ꜀ = Rₜₛ * Rₛ꜀
+    R꜀ₜ = R꜀ₛ * Rₛₜ
+    # ̂ω = skew(ω)
+
+# =========================================================================== #
+#                           Target Dyanmics
+# =========================================================================== #
+    # Target Rotational Dynamics written in target frame
+    ω̇ₛₜᵗ = Jₜ \ (-ωₛₜᵗ × (Jₜ * ωₛₜᵗ))            # Body velocity dynamics
+    q̇ₛₜˢ = kinematics(UnitQuaternion(qₛₜˢ), ωₛₜᵗ)  # Quaternion kinematics
+    # Target Translational Dynamics written in spatial frame
+
+    ṗₛₜˢ = Rₛₜ * vₜᵗ + Rₛₜ*skew(ωₜᵗ)*Rₜₛ*pₛₜˢ
+    v̇ₛₜᵗ = Rₜₛ * (-(G * mₛ)/norm(pₛₜˢ)^3 * pₛₜˢ) - ω̇ₛₜᵗ*Rₜₛ*pₛₜˢ - skew(ωₛₜᵗ)*skew(ωₛₜᵗ)*Rₜₛ*pₛₜˢ - 2*(ωₛₜᵗ × vₛₜᵗ)
+
+# =========================================================================== #
+#                           Chaser Dyanmics
+# =========================================================================== #
+    # Chaser rotational dynamics written in chaser frame
+    ω̇ₛ꜀ᶜ = J꜀ \ (𝜏꜀ - ωₛ꜀ᶜ × (J꜀ * ωₛ꜀ᶜ))            # Body velocity dynamics
+    # Chaser rotational kinematics written in spatial frame
+    q̇ₛ꜀ˢ = kinematics(UnitQuaternion(qₛ꜀ˢ), ωₛ꜀ᶜ)  # Quaternion kinematics
+
+    # Useful definitions
+    pₛₜᵗ = Rₜₛ * pₛₜˢ
+    pₛ꜀ᵗ = pₛₜᵗ + pₜ꜀ᵗ
+    vₛ꜀ᵗ = vₛₜᵗ + vₜ꜀ᵗ
+    ṗₛₜᵗ = vₛₜᵗ
+    ṗₛ꜀ᵗ = (-ωₛₜᵗ × pₛ꜀ᵗ) + vₛ꜀ᵗ
+    # Chaser translational kinematics written in target frame
+    ṗₜ꜀ᵗ = ṗₛ꜀ᵗ - ṗₛₜᵗ
 
     # Useful definitions
     pₛ꜀ˢ = Rₛₜ * pₛ꜀ᵗ

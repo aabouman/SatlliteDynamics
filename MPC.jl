@@ -105,9 +105,9 @@ function buildQP!(ctrl::MPCController{OSQP.Model}, X, U)
     i1, i2 = 14:26, 13:24
 
     # Construct specific translation/rotational
-    X_tmp1 = [[zeros(3);  X[i][iq2]; zeros(3);  X[i][iw2]]  - ctrl.Xref[i]
+    X_tmp1 = [[X[i][ip2];  X[i][iq2]; X[i][iv2];  X[i][iw2]]  - ctrl.Xref[i]
               for i = 1:N]
-    U_tmp1 = [[zeros(3); U[i][i𝜏]] - ctrl.Uref[i]
+    U_tmp1 = [[U[i][i𝑓]; U[i][i𝜏]] - ctrl.Uref[i]
              for i = 1:N-1]
 
     q = [[ctrl.R * U_tmp1[i]; ctrl.Q * X_tmp1[i+1]]
@@ -130,9 +130,9 @@ function buildQP!(ctrl::MPCController{OSQP.Model}, X, U)
 
     # TAKEN WRT X_TMP
     X_tmp2 = [[X[i][i0];
-               zeros(3); ctrl.Xref[i][iq1]; zeros(3); ctrl.Xref[i][iw1]]
+               ctrl.Xref[i][ip1]; ctrl.Xref[i][iq1]; ctrl.Xref[i][iv1]; ctrl.Xref[i][iw1]]
               for i = 1:N]
-    U_tmp2 = [[zeros(3); ctrl.Uref[i][i𝜏]] for i = 1:N-1]
+    U_tmp2 = [[ctrl.Uref[i][i𝑓]; ctrl.Uref[i][i𝜏]] for i = 1:N-1]
 
     A = [state_error_jacobian(X[i+1])[i1,i2]' *
          discreteJacobian(X_tmp2[i], U_tmp2[i], ctrl.δt)[1][i1,i1] *
@@ -157,8 +157,8 @@ function buildQP!(ctrl::MPCController{OSQP.Model}, X, U)
                 for i = 1:N]
 
     # Compute the equality constraints
-    dynConstlb = vcat(-A[1] * state_error_half(X[1][i1], Xref_tmp[1]), zeros((N-2)*n))
-    dynConstub = vcat(-A[1] * state_error_half(X[1][i1], Xref_tmp[1]), zeros((N-2)*n))
+    dynConstlb = vcat(-A[1] * state_error_half(X[1][i1], ctrl.Xref[1]), zeros((N-2)*n))
+    dynConstub = vcat(-A[1] * state_error_half(X[1][i1], ctrl.Xref[1]), zeros((N-2)*n))
 
     # Concatenate the dynamics constraints and earth radius constraint bounds
     ctrl.lb .= vcat(dynConstlb)
@@ -188,10 +188,12 @@ function stateInterpolate_CW(x_init::Vector, N::Int64, δt::Real)
 
     # Build the reference trajectory for the chaser's orientaiton and angular
     # velocity. This is just the trajectory of the target
-    p2s = range(p2, zeros(3), length=N)
+    # p2s = range(p2, zeros(3), length=N)
+    p2s = range(p2, p1s[end], length=N)
     # p2s = [zeros(3) for i in 1:N]
     q2s = deepcopy(q1s)
-    v2s = range(v2, zeros(3), length=N)
+    # v2s = range(v2, zeros(3), length=N)
+    v2s = range(v2, v1s[end], length=N)
     # v2s = [zeros(3) for i in 1:N]
     w2s = deepcopy(w1s)
 
