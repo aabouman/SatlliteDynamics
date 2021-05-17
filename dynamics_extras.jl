@@ -130,10 +130,10 @@ function dynamics(x::SVector{num_states}, u::SVector{num_inputs})
     pₛ꜀ᵗ = pₛₜᵗ + pₜ꜀ᵗ
     vₛ꜀ᵗ = vₛₜᵗ + vₜ꜀ᵗ
     ṗₛₜᵗ = vₛₜᵗ
-    # ṗₛ꜀ᵗ = (-ωₛₜᵗ × pₛ꜀ᵗ) + vₛ꜀ᵗ
+    ṗₛ꜀ᵗ = (-ωₛₜᵗ × pₛ꜀ᵗ) + vₛ꜀ᵗ
     # Chaser translational kinematics written in target frame
-    # ṗₜ꜀ᵗ = ṗₛ꜀ᵗ - ṗₛₜᵗ
-    ṗₜ꜀ᵗ = (-ωₛₜᵗ × pₜ꜀ᵗ) + (vₛ꜀ᵗ - vₛₜᵗ)
+    ṗₜ꜀ᵗ = ṗₛ꜀ᵗ - ṗₛₜᵗ
+    # ṗₜ꜀ᵗ = (-ωₛₜᵗ × pₜ꜀ᵗ) + (vₛ꜀ᵗ - vₛₜᵗ)
 
     # Useful definitions
     pₛ꜀ˢ = Rₛₜ * pₛ꜀ᵗ

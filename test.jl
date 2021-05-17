@@ -6,14 +6,22 @@ include("dynamics.jl");
 # discreteDynamics(x_init1, zeros(6), 0.01)
 # %%
 n = 12; m = 6;
-N = 10000; δt = 0.001;
+N = 5000; δt = 0.01;
 
-x_init1 = [6.371, 0, 0, 1., 0, 0, 0, 0, 15.44, 0, 0, 0, 3,
-           7.371, 0, 0, 1., 0, 0, 0, 0, 15.1, 0, 0, 0, 1]
+mₜ = 4.709;             # Mass of satellite Megagrams
+mₛ = 5.97e21;           # Mass of earth Megagrams
+G = 8.65e-19;           # Gravitational constant Megameters^3/Hour^2 Megagrams
+earthRadius = 6.371;    # Radius of earth Megameters
+orbitRadius = earthRadius + 1.0
+μ = sqrt(G * mₛ / ((orbitRadius)^3))    # radians / hour
+vx_des = (G*mₛ/earthRadius)^(0.5)
+vx_des2 = 15.
+x_init1 = [6.371, 0, 0, 1., 0, 0, 0, 0, vx_des, 0, 0, 0, 0,
+           1., 0, 0, 1., 0, 0, 0, 0, .1, 0, 0, 0, 0]
 roll1 = rollout(x_init1, [zeros(6) for _ in 1:N], δt);
 
 NRG_target = systemEnergy.(roll1)
-min(NRG_target...)
+max(NRG_target...) - min(NRG_target...)
 # %%
 plot(NRG_target)
 
@@ -34,7 +42,7 @@ vy2s = [roll1[i][15] for i in 1:length(roll1)]
 
 wz1s = [roll1[i][13] for i in 1:length(roll1)]
 
-x_init2 = [7.371, 0, 0, 1., 0, 0, 0, 0, 15.54, 0, 0, 0, 3,
+x_init2 = [7.371, 0, 0, 1., 0, 0, 0, 0, vx_des + 0.1, 0, 0, 0, 3,
            0, 0, 0, 1., 0, 0, 0, 0, 0, 0, 0, 0, 0]
 roll2 = rollout(x_init2, [zeros(6) for _ in 1:N], δt)
 
@@ -48,12 +56,12 @@ plot(x1s,y1s, legend=false)
 # %% vx vs vy
 plot(vx1s,vy1s, legend=false)
 # %% position and velocity wrt time
-plot(x1s)
-plot!(y1s)
-plot!(vx1s)
-plot!(vy1s)
-# plot!(x1s+x2s, y1s+y2s)
-# plot!(x3s, y3s)
+# plot(x1s)
+# plot!(y1s)
+# plot!(vx1s)
+# plot!(vy1s)
+plot(x1s+x2s, y1s+y2s)
+plot!(x3s, y3s)
 # plot!(x2s, y2s)
 
 # %% plotting Quaternions
@@ -67,6 +75,8 @@ vx2s = [roll1[i][21] for i in 1:length(roll1)]
 vy2s = [roll1[i][22] for i in 1:length(roll1)]
 plot(vx2s,vy2s)
 # %%
+plot(x1s+x2s, y1s+y2s)
+# %%
 plot(wz1s)
 
 # %%
@@ -74,10 +84,10 @@ using LinearAlgebra: Diagonal
 include("MPC.jl");
 
 n = 13; m = 6;
-N = 100; δt = 0.001;
+N = 50; δt = 0.01;
 num_steps = 1500
 Np = (N-1)*(n-1+m)
-Nd = (N-1)*(n-1)
+Nd = (N-1)*(n-1) + (N-1)*m
 
 # Q = Matrix(Diagonal([1.,1,1, 2,2,2,2, 1,1,1, 1,1,1,
 #                      1.,1,1, 2,2,2,2, 1,1,1, 1,1,1])) * 1.
@@ -85,14 +95,15 @@ Nd = (N-1)*(n-1)
 # Qf = Matrix(Diagonal([1.,1,1, 2,2,2,2, 1,1,1, 1,1,1,
 #                       1.,1,1, 2,2,2,2, 1,1,1, 1,1,1])) * 10.
 
-Q = Matrix(Diagonal([5.,5,5, 1,1,1,1, 5,5,5, 2,2,2])) * 1.
+Q = Matrix(Diagonal([5.,5,5, 1,1,1,1, 5,5,5, 2,2,2])) * 10.
 R = Matrix(Diagonal([1.,1,1,1,1,1])) * .1
 Qf = Matrix(Diagonal([5.,5,5,  1,1,1,1, 5,5,5, 1,1,1])) * 10.
 
 
 ctrl = OSQPController(Q, R, Qf, δt, N, Np, Nd);
 
-
+# blockdiag(sparse(I(2)), sparse(zeros(3,3)))
+# kron(I(N-1),[sparse(I(2)) sparse(zeros(2,3))])
 # %%
 using LinearAlgebra: det
 mₜ = 4.709;             # Mass of satellite Megagrams
@@ -101,15 +112,15 @@ G = 8.65e-19;           # Gravitational constant Megameters^3/Hour^2 Megagrams
 earthRadius = 6.371;    # Radius of earth Megameters
 orbitRadius = earthRadius + 1.0
 μ = sqrt(G * mₛ / ((orbitRadius)^3))    # radians / hour
+vy_des = (G*mₛ/earthRadius)^(0.5)
 
-
-x_init1 = [6.371, 0, 0, 1., 0, 0, 0, 0, 15.44, 0, 0, 0, μ,
-           7.371,     0, 0, 1., 0, 0, 0, 0,   15.54,  0, 0, 0, 1]
+x_init1 = [6.371, 0, 0, 1., 0, 0, 0, 0, vy_des, 0, 0, 0, μ,
+           1.,    0, 0, 1., 0, 0, 0, 0,   0.1,  0, 0, 0, 1.]
 
 x_hist, u_hist, cost_hist = simulate(ctrl, x_init1; num_steps=num_steps, verbose=false);
 
 # %%
-u_hist[end-1]
+min(u_hist...)
 # %%
 using Plots
 plot([1:length(cost_hist);], cost_hist, title="Cost",

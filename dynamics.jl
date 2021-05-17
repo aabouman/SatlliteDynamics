@@ -31,9 +31,9 @@ function dynamics(x::SVector{num_states}, u::SVector{num_inputs})
     v_st_s = @SVector [x[8], x[9], x[10]]
     ω_t_t = @SVector [x[11], x[12], x[13]]
 
-    p_sc_s = @SVector [x[14], x[15], x[16]]
+    p_ct_t = @SVector [x[14], x[15], x[16]]
     q_sc_s = normalize(@SVector [x[17], x[18], x[19], x[20]])
-    v_sc_s = @SVector [x[21], x[22], x[23]]
+    v_ct_t = @SVector [x[21], x[22], x[23]]
     ω_c_c = @SVector [x[24], x[25], x[26]]
 
     𝑓_c = @SVector [u[1], u[2], u[3]]
@@ -42,6 +42,8 @@ function dynamics(x::SVector{num_states}, u::SVector{num_inputs})
     # Building helpful rot matricies
     Rst = RotMatrix(UnitQuaternion(q_st_s))
     Rsc = RotMatrix(UnitQuaternion(q_sc_s))
+
+    p_sc_s = p_st_s - Rst*p_ct_t
 
 # =========================================================================== #
 #                           Target Dyanmics
@@ -56,14 +58,14 @@ function dynamics(x::SVector{num_states}, u::SVector{num_inputs})
 #                           Chaser Dyanmics
 # =========================================================================== #
     # Target Translational Dynamics written in spatial frame
-    p_sc_s_dot = v_sc_s
-    v_sc_s_dot = -(G * mₛ)/norm(p_sc_s)^3 * p_sc_s  +  Rsc *  𝑓_c/m꜀
+    p_ct_t_dot = v_ct_t - (ω_t_t × p_ct_t)
+    v_ct_t_dot = Rst'*(-(G * mₛ)/norm(p_sc_s)^3 * p_sc_s  +  Rsc *  𝑓_c/m꜀ - v_st_s_dot) - (ω_t_t × v_ct_t)
     # Target Rotational Dynamics written in target frame
     q_sc_s_dot = kinematics(UnitQuaternion(q_sc_s), ω_c_c)  # Quaternion kinematics
     ω_c_c_dot = Jₜ \ (𝜏_c - ω_c_c × (Jₜ * ω_c_c))            # Body velocity dynamics
 
     return [p_st_s_dot; q_st_s_dot; v_st_s_dot; ω_t_t_dot;
-            p_sc_s_dot; q_sc_s_dot; v_sc_s_dot; ω_c_c_dot]
+            p_ct_t_dot; q_sc_s_dot; v_ct_t_dot; ω_c_c_dot]
 end
 
 
