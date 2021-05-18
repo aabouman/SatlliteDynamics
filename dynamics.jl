@@ -26,19 +26,19 @@ function dynamics(x::Vector, u::Vector)
 end
 
 function dynamics(x::SVector{num_states}, u::SVector{num_inputs})
+    # Extract target state
     p_st_s = @SVector [x[1], x[2], x[3]]
     q_st_s = normalize(@SVector [x[4], x[5], x[6], x[7]])
     v_st_s = @SVector [x[8], x[9], x[10]]
     ω_t_t = @SVector [x[11], x[12], x[13]]
-
+    # Extract chaser state
     p_sc_s = @SVector [x[14], x[15], x[16]]
     q_sc_s = normalize(@SVector [x[17], x[18], x[19], x[20]])
     v_sc_s = @SVector [x[21], x[22], x[23]]
     ω_c_c = @SVector [x[24], x[25], x[26]]
-
+    # Extract input
     𝑓_c = @SVector [u[1], u[2], u[3]]
     𝜏_c = @SVector [u[4], u[5], u[6]]
-
     # Building helpful rot matricies
     Rst = RotMatrix(UnitQuaternion(q_st_s))
     Rsc = RotMatrix(UnitQuaternion(q_sc_s))
@@ -48,7 +48,7 @@ function dynamics(x::SVector{num_states}, u::SVector{num_inputs})
 # =========================================================================== #
     # Target Translational Dynamics written in spatial frame
     p_st_s_dot = v_st_s
-    v_st_s_dot = (-(G * mₛ)/norm(p_st_s)^3 * p_st_s)
+    v_st_s_dot = -(G * mₛ)/norm(p_st_s)^3 * p_st_s
     # Target Rotational Dynamics written in target frame
     q_st_s_dot = kinematics(UnitQuaternion(q_st_s), ω_t_t)  # Quaternion kinematics
     ω_t_t_dot = Jₜ \ (-ω_t_t × (Jₜ * ω_t_t))            # Body velocity dynamics
@@ -76,8 +76,6 @@ end
 
 
 function discreteDynamics(x::Vector, u::Vector, δt::Real)
-
-
     k1 = dynamics(x, u)
     k2 = dynamics(x + 0.5 * δt * k1, u)
     k3 = dynamics(x + 0.5 * δt * k2, u)
@@ -96,15 +94,18 @@ end
 
 function systemEnergy(x::Vector)
     pₛₜˢ = x[1:3]
-    qₛₜˢ = x[4:7]
-    vₜᵗ = x[8:10]
-    ωₜᵗ = x[11:13]
+    qₛₜ = x[4:7]
+    vₛₜˢ = x[8:10]
+    ωₛₜᵗ = x[11:13]
 
-    NRG_target = mₜ/2 * vₜᵗ' * vₜᵗ + (1/2)*(ωₜᵗ' * Jₜ * ωₜᵗ) - (G*mₛ*mₜ/norm(pₛₜˢ))
+    Rₛₜ = RotMatrix(UnitQuaternion(qₛₜ))
+    ωₛₜˢ = Rₛₜ * ωₛₜᵗ
+
+    NRG_target = (mₜ/2 * vₛₜˢ' * vₛₜˢ) + (1/2 * ωₛₜˢ' * Jₜ * ωₛₜˢ) - (G*mₛ*mₜ / norm(pₛₜˢ))
 
     return NRG_target
-
 end
+
 
 function rollout(x0::Vector, Utraj::Vector, δt::Real)
     N = length(Utraj)
@@ -136,6 +137,7 @@ function state_error(x::Vector, xref::Vector)
           x[ip2] - xref[ip2]; q2e; x[iv2] - xref[iv2]; x[iw2] - xref[iw2]]
     return dx
 end
+
 
 function state_error_half(x::Vector, xref::Vector)
     ip1, iq1, iv1, iw1 =  1:3,   4:7,   8:10, 11:13

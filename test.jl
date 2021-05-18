@@ -1,97 +1,69 @@
 using Plots
+using Images, FileIO
+using LaTeXStrings
+
 include("MPC.jl");
-plotly()
 include("dynamics.jl");
-# %%
-# discreteDynamics(x_init1, zeros(6), 0.01)
+
 # %%
 n = 12; m = 6;
-N = 10000; δt = 0.001;
+N = 5000; δt = 0.005;
 
-x_init1 = [6.371, 0, 0, 1., 0, 0, 0, 0, 15.44, 0, 0, 0, 3,
+x_init1 = [6.371*6, 0, 0, 1., 0, 0, 0, 0, 7, 0, 0, 0, 3,
            7.371, 0, 0, 1., 0, 0, 0, 0, 15.1, 0, 0, 0, 1]
 roll1 = rollout(x_init1, [zeros(6) for _ in 1:N], δt);
-
-NRG_target = systemEnergy.(roll1)
-min(NRG_target...)
-# %%
-plot(NRG_target)
 
 # %%
 x1s = [roll1[i][1] for i in 1:length(roll1)]
 y1s = [roll1[i][2] for i in 1:length(roll1)]
-q1s = [roll1[i][4] for i in 1:length(roll1)]
-q2s = [roll1[i][5] for i in 1:length(roll1)]
-q3s = [roll1[i][6] for i in 1:length(roll1)]
-q4s = [roll1[i][7] for i in 1:length(roll1)]
-vx1s = [roll1[i][8] for i in 1:length(roll1)]
-vy1s = [roll1[i][9] for i in 1:length(roll1)]
-
-x2s = [roll1[i][14] for i in 1:length(roll1)]
-y2s = [roll1[i][15] for i in 1:length(roll1)]
-vx2s = [roll1[i][14] for i in 1:length(roll1)]
-vy2s = [roll1[i][15] for i in 1:length(roll1)]
-
-wz1s = [roll1[i][13] for i in 1:length(roll1)]
-
-x_init2 = [7.371, 0, 0, 1., 0, 0, 0, 0, 15.54, 0, 0, 0, 3,
-           0, 0, 0, 1., 0, 0, 0, 0, 0, 0, 0, 0, 0]
-roll2 = rollout(x_init2, [zeros(6) for _ in 1:N], δt)
-
-x3s = [roll2[i][1] for i in 1:length(roll1)];
-y3s = [roll2[i][2] for i in 1:length(roll1)];
-vx3s = [roll2[i][1] for i in 1:length(roll1)];
-vy3s = [roll2[i][2] for i in 1:length(roll1)];
-
-# %% px vs py
-plot(x1s,y1s, legend=false)
-# %% vx vs vy
-plot(vx1s,vy1s, legend=false)
-# %% position and velocity wrt time
-plot(x1s)
-plot!(y1s)
-plot!(vx1s)
-plot!(vy1s)
-# plot!(x1s+x2s, y1s+y2s)
-# plot!(x3s, y3s)
-# plot!(x2s, y2s)
-
-# %% plotting Quaternions
-plot(q1s)
-plot!(q2s)
-plot!(q3s)
-plot!(q4s)
+NRG_target = systemEnergy.(roll1)
+min(NRG_target...)
 
 # %%
-vx2s = [roll1[i][21] for i in 1:length(roll1)]
-vy2s = [roll1[i][22] for i in 1:length(roll1)]
-plot(vx2s,vy2s)
-# %%
-plot(wz1s)
+img1 = load("graphics/planet-earth.png")
+img2 = load("graphics/satellite.png")
+scale = .95
+p1 = plot([-earthRadius*scale, earthRadius*scale],
+          [-earthRadius*scale, earthRadius*scale],
+          img1[end:-1:1, :], yflip = false)
+plot!(p1, [36, 41],
+          [-1.5, 1.5],
+          img2[end:-1:1, :], yflip = false)
+
+plot!(p1, x1s, y1s, background_color=:transparent, legend=false,
+          aspect_ratio=:equal, xaxis=L"10^6 meters", yaxis=L"10^6 meters",
+          title="Orbit Around Gravitational Body Located At (0,0)")
+savefig(p1, "graphics/target_orbit.png")
+display(p1)
 
 # %%
 using LinearAlgebra: Diagonal
 include("MPC.jl");
 
 n = 13; m = 6;
-N = 100; δt = 0.001;
+N = 50; δt = 0.01;
 num_steps = 1500
 Np = (N-1)*(n-1+m)
 Nd = (N-1)*(n-1)
 
-# Q = Matrix(Diagonal([1.,1,1, 2,2,2,2, 1,1,1, 1,1,1,
-#                      1.,1,1, 2,2,2,2, 1,1,1, 1,1,1])) * 1.
-# R = Matrix(Diagonal([1.,1,1,1,1,1])) * .1
-# Qf = Matrix(Diagonal([1.,1,1, 2,2,2,2, 1,1,1, 1,1,1,
-#                       1.,1,1, 2,2,2,2, 1,1,1, 1,1,1])) * 10.
-
-Q = Matrix(Diagonal([5.,5,5, 1,1,1,1, 5,5,5, 2,2,2])) * 1.
-R = Matrix(Diagonal([1.,1,1,1,1,1])) * .1
-Qf = Matrix(Diagonal([5.,5,5,  1,1,1,1, 5,5,5, 1,1,1])) * 10.
-
+Q = Matrix(Diagonal([1.,1,1, 5,5,5,5, 1,1,1, 5,5,5])) * 1.
+R = Matrix(Diagonal([1.,1,1,1,1,1])) * .01
+Qf = Matrix(Diagonal([1.,1,1, 5,5,5,5, 1,1,1, 5,5,5])) * 10.
 
 ctrl = OSQPController(Q, R, Qf, δt, N, Np, Nd);
 
+# %%
+x_init1 = [6.371*6, 0, 0, 1., 0, 0, 0, 0, 7, 0, 0, 0, 3,
+           6.371*6 - 3, 0, 0, 1., 0, 0, 0, 0, 7.5, 0, 0, 0, 1]
+
+roll1 = rollout(x_init1, [zeros(6) for _ in 1:num_steps], δt);
+x1s = [roll1[i][1] for i in 1:length(roll1)]
+y1s = [roll1[i][2] for i in 1:length(roll1)]
+x2s = [roll1[i][14] for i in 1:length(roll1)]
+y2s = [roll1[i][15] for i in 1:length(roll1)]
+
+plot(x1s, y1s)
+plot!(x2s, y2s)
 
 # %%
 using LinearAlgebra: det
@@ -103,18 +75,53 @@ orbitRadius = earthRadius + 1.0
 μ = sqrt(G * mₛ / ((orbitRadius)^3))    # radians / hour
 
 
-x_init1 = [6.371, 0, 0, 1., 0, 0, 0, 0, 15.44, 0, 0, 0, μ,
-           7.371,     0, 0, 1., 0, 0, 0, 0,   15.54,  0, 0, 0, 1]
+x_init1 = [6.371*6, 0, 0, 1., 0, 0, 0, 0, 7, 0, 0, 0, 3,
+           6.371*6 - 3, 0, 0, 1., 0, 0, 0, 0, 7.5, 0, 0, 0, 1]
 
 x_hist, u_hist, cost_hist = simulate(ctrl, x_init1; num_steps=num_steps, verbose=false);
 
 # %%
-u_hist[end-1]
+function findlocalmaxima(signal::Vector)
+    inds = Int[]
+    if length(signal) > 1
+        if signal[1] > signal[2]
+            push!(inds, 1)
+        end
+        for i=2:length(signal)-1
+            if signal[i-1] < signal[i] > signal[i+1]
+                push!(inds,i)
+            end
+        end
+        if signal[end]>signal[end-1]
+            push!(inds,length(signal))
+        end
+    end
+    inds
+ end
+
+cost_hist[findlocalmaxima(cost_hist)]
+
+# %%
+plot([u_hist[i][1] for i = 1:length(u_hist)], title="linear force",
+   xlabel="Simulation Step", size=(500, 400), line=(1, "red") , label = "force-x")
+plot!([u_hist[i][2] for i = 1:length(u_hist)],
+    xlabel="Simulation Step", size=(500, 400), line=(2, "blue") , label = "force-y" )
+plot!([u_hist[i][3] for i = 1:length(u_hist)],
+    xlabel="Simulation Step", size=(500, 400), line=(2, "green") , label = "force-z" )
+
 # %%
 using Plots
 plot([1:length(cost_hist);], cost_hist, title="Cost",
      xlabel="Simulation Step", legend=false, size=(500, 400)) #yaxis=:log
 # savefig("graphics/rotation_cost.png")
+
+# %%
+plot([u_hist[i][1] for i = 1:length(u_hist)], title="linear force",
+   xlabel="Simulation Step", size=(500, 400), line=(1, "red") , label = "force-x")
+plot!([u_hist[i][2] for i = 1:length(u_hist)],
+    xlabel="Simulation Step", size=(500, 400), line=(2, "blue") , label = "force-y" )
+plot!([u_hist[i][3] for i = 1:length(u_hist)],
+    xlabel="Simulation Step", size=(500, 400), line=(2, "green") , label = "force-z" )
 
 # %%
 plot([x_hist[i][1] for i = 1:length(x_hist)], title="position",
