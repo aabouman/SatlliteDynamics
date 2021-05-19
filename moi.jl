@@ -16,7 +16,7 @@ function MOI.eval_constraint_jacobian(prob::HybridNLP, vec, x)
     n_nlp, m_nlp = num_primals(prob), num_duals(prob)
     jac = reshape(vec, m_nlp, n_nlp)
     # ForwardDiff.jacobian!(reshape(jac,m_nlp,n_nlp), (c,x) -> eval_c!(nlp, c, x), zeros(m_nlp), x)
-    jac_c!(nlp, jac, x)
+    jac_c!(prob, jac, x)
     return nothing
 end
 
@@ -38,8 +38,9 @@ The following arguments are sent to Ipopt
 * `c_tol`: constraint feasibility tolerance
 * `max_iter`: maximum number of solver iterations
 """
-function solve(x0,prob::HybridNLP;
-        tol=1.0e-6,c_tol=1.0e-6,max_iter=10000)
+function solve(x0, prob::HybridNLP; tol=1.0e-6,c_tol=1.0e-6,max_iter=10000)
+    MOI.Silent()
+
     n_nlp, m_nlp = num_primals(prob), num_duals(prob)
     x_l, x_u = fill(-Inf,n_nlp), fill(+Inf,n_nlp)
     c_l, c_u = prob.lb, prob.ub

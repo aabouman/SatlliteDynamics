@@ -15,8 +15,8 @@ m꜀ = 419.709;
 mₛ = 5.972e21;
 G = 8.6498928e-19;
 
-num_states = 26
-num_inputs = 6
+num_states = 12
+num_inputs = 3
 
 
 function dynamics(x::Vector, u::Vector)
@@ -28,20 +28,19 @@ end
 function dynamics(x::SVector{num_states}, u::SVector{num_inputs})
     # Extract target state
     p_st_s = @SVector [x[1], x[2], x[3]]
-    q_st_s = normalize(@SVector [x[4], x[5], x[6], x[7]])
-    v_st_s = @SVector [x[8], x[9], x[10]]
-    ω_t_t = @SVector [x[11], x[12], x[13]]
+    # q_st_s = normalize(@SVector [x[4], x[5], x[6], x[7]])
+    v_st_s = @SVector [x[4], x[5], x[6]]
+    # ω_t_t = @SVector [x[11], x[12], x[13]]
     # Extract chaser state
-    p_sc_s = @SVector [x[14], x[15], x[16]]
-    q_sc_s = normalize(@SVector [x[17], x[18], x[19], x[20]])
-    v_sc_s = @SVector [x[21], x[22], x[23]]
-    ω_c_c = @SVector [x[24], x[25], x[26]]
+    p_sc_s = @SVector [x[7], x[8], x[9]]
+    # q_sc_s = normalize(@SVector [x[17], x[18], x[19], x[20]])
+    v_sc_s = @SVector [x[10], x[11], x[12]]
+    # ω_c_c = @SVector [x[24], x[25], x[26]]
     # Extract input
     𝑓_c = @SVector [u[1], u[2], u[3]]
-    𝜏_c = @SVector [u[4], u[5], u[6]]
     # Building helpful rot matricies
-    Rst = RotMatrix(UnitQuaternion(q_st_s))
-    Rsc = RotMatrix(UnitQuaternion(q_sc_s))
+    # Rst = RotMatrix(UnitQuaternion(q_st_s))
+    # Rsc = RotMatrix(UnitQuaternion(q_sc_s))
 
 # =========================================================================== #
 #                           Target Dyanmics
@@ -50,20 +49,20 @@ function dynamics(x::SVector{num_states}, u::SVector{num_inputs})
     p_st_s_dot = v_st_s
     v_st_s_dot = -(G * mₛ)/norm(p_st_s)^3 * p_st_s
     # Target Rotational Dynamics written in target frame
-    q_st_s_dot = kinematics(UnitQuaternion(q_st_s), ω_t_t)  # Quaternion kinematics
-    ω_t_t_dot = Jₜ \ (-ω_t_t × (Jₜ * ω_t_t))            # Body velocity dynamics
+    # q_st_s_dot = kinematics(UnitQuaternion(q_st_s), ω_t_t)  # Quaternion kinematics
+    # ω_t_t_dot = Jₜ \ (-ω_t_t × (Jₜ * ω_t_t))            # Body velocity dynamics
 # =========================================================================== #
 #                           Chaser Dyanmics
 # =========================================================================== #
     # Target Translational Dynamics written in spatial frame
     p_sc_s_dot = v_sc_s
-    v_sc_s_dot = -(G * mₛ)/norm(p_sc_s)^3 * p_sc_s  +  Rsc *  𝑓_c/m꜀
+    v_sc_s_dot = -(G * mₛ)/norm(p_sc_s)^3 * p_sc_s  +  𝑓_c/m꜀
     # Target Rotational Dynamics written in target frame
-    q_sc_s_dot = kinematics(UnitQuaternion(q_sc_s), ω_c_c)  # Quaternion kinematics
-    ω_c_c_dot = Jₜ \ (𝜏_c - ω_c_c × (Jₜ * ω_c_c))            # Body velocity dynamics
+    # q_sc_s_dot = kinematics(UnitQuaternion(q_sc_s), ω_c_c)  # Quaternion kinematics
+    # ω_c_c_dot = Jₜ \ (𝜏_c - ω_c_c × (Jₜ * ω_c_c))            # Body velocity dynamics
 
-    return [p_st_s_dot; q_st_s_dot; v_st_s_dot; ω_t_t_dot;
-            p_sc_s_dot; q_sc_s_dot; v_sc_s_dot; ω_c_c_dot]
+    return [p_st_s_dot; v_st_s_dot;
+            p_sc_s_dot; v_sc_s_dot]
 end
 
 
@@ -75,18 +74,20 @@ function jacobian(x::Vector, u::Vector)
 end
 
 
-function discreteDynamics(x::Vector, u::Vector, δt::Real)
+function discreteDynamics(x::SVector{num_states}, u::SVector{num_inputs}, δt::Real)
     k1 = dynamics(x, u)
-    k2 = dynamics(x + 0.5 * δt * k1, u)
-    k3 = dynamics(x + 0.5 * δt * k2, u)
-    k4 = dynamics(x + δt * k3, u)
+    k2 = dynamics(x .+ 0.5 * δt * k1, u)
+    k3 = dynamics(x .+ 0.5 * δt * k2, u)
+    k4 = dynamics(x .+ δt * k3, u)
     xnext = x + (δt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
 
     return xnext
 end
 
-
 function discreteJacobian(x::Vector, u::Vector, δt::Real)
+    x = SVector{length(x)}(x)
+    u = SVector{length(u)}(u)
+
     A = ForwardDiff.jacobian(x_temp->discreteDynamics(x_temp, u, δt), x)
     B = ForwardDiff.jacobian(u_temp->discreteDynamics(x, u_temp, δt), u)
     return (A, B)
@@ -94,9 +95,9 @@ end
 
 function systemEnergy(x::Vector)
     pₛₜˢ = x[1:3]
-    qₛₜ = x[4:7]
-    vₛₜˢ = x[8:10]
-    ωₛₜᵗ = x[11:13]
+    # qₛₜ = x[4:7]
+    vₛₜˢ = x[4:6]
+    # ωₛₜᵗ = x[11:13]
 
     Rₛₜ = RotMatrix(UnitQuaternion(qₛₜ))
     ωₛₜˢ = Rₛₜ * ωₛₜᵗ

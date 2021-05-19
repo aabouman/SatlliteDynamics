@@ -1,20 +1,20 @@
 # %% codecell
 import Pkg; Pkg.activate(joinpath(@__DIR__,"..")); Pkg.instantiate()
-# Pkg.add("WebIO")
 using LinearAlgebra
-using ForwardDiff
-using RobotZoo
-using RobotDynamics
 using Ipopt
+
+using ForwardDiff
+using RobotDynamics
+
 using MathOptInterface
-using TrajOptPlots
 const MOI = MathOptInterface
-using Random
-using Test
+
+using SparseArrays
+
 include("quadratic_cost.jl")
 include("dynamics.jl")
 include("utils.jl")
-include("moi.jl")
+
 # %%
 """
     HybridNLP{n,m,L,Q}
@@ -45,16 +45,16 @@ The NLP supports the following API for evaluating various pieces of the NLP:
     eval_c!(nlp, c, Z)     # evaluate the constraints
     jac_c!(nlp, c, Z)      # constraint Jacobian
 """
-struct HybridNLP{n,m,L,Q} <: MOI.AbstractNLPEvaluator
-    model::L                                 # dynamics model
+struct HybridNLP{n, m, Q} <: MOI.AbstractNLPEvaluator
     obj::Vector{QuadraticCost{n,m,Float64}}  # objective function
     N::Int                                   # number of knot points
+    δt::Float64
     x0::MVector{n,Float64}                   # initial condition
+    Xref::Vector{SVector{n,Float64}}
+    Uref::Vector{SVector{m,Float64}}
     xinds::Vector{SVector{n,Int}}            # Z[xinds[k]] gives states for time step k
     uinds::Vector{SVector{m,Int}}            # Z[uinds[k]] gives controls for time step k
-    cinds::Vector{UnitRange{Int}}            # indices for each of the constraints
-    Xref::Vector{SVector{n,Float64}}         # reference trajectories
-    Uref::Vetor{SVector{m,Float64}}          # control reference
+    cinds::UnitRange{Int}                    # indices for each of the constraints
     lb::Vector{Float64}                      # lower bounds on the constraints
     ub::Vector{Float64}                      # upper bounds on the constraints
     zL::Vector{Float64}                      # lower bounds on the primal variables
@@ -62,11 +62,15 @@ struct HybridNLP{n,m,L,Q} <: MOI.AbstractNLPEvaluator
     rows::Vector{Int}                        # rows for Jacobian sparsity
     cols::Vector{Int}                        # columns for Jacobian sparsity
     function HybridNLP(obj::Vector{<:QuadraticCost{n,m}},
-                    N::Integer, x0::AbstractVector, integration::Type{<:QuadratureRule}=RK4
+                    N::Integer, dt::Float64, x0::AbstractVector, integration::Type{<:QuadratureRule}=RK4
         ) where {n,m}
+
+        Xref = [@SVector zeros(n) for k = 1:N]
+        Uref = [@SVector zeros(m) for k = 1:N-1]
+
         # Create indices
-        xinds = [SVector{n}((k-1)*(n+m) .+ (1:n)) for k = 1:N]
-        uinds = [SVector{m}((k-1)*(n+m) .+ (n+1:n+m)) for k = 1:N-1]
+        uinds = [SVector{m}((k-1)*(n+m) .+ (1:m)) for k = 1:N-1]
+        xinds = [SVector{n}((k-1)*(n+m) .+ (m+1:n+m)) for k = 1:N-1]
 
         # TODO: specify the constraint indices
         c_dyn_inds = 1 : (N-1)*n
@@ -90,16 +94,18 @@ struct HybridNLP{n,m,L,Q} <: MOI.AbstractNLPEvaluator
         rows = Int[]
         cols = Int[]
 
-        new{n,m,typeof(model), integration}(
-            model, obj,
-            N, M, Nmodes, tf, x0, xf, times, modes,
-            xinds, uinds, cinds, lb, ub, zL, zU, rows, cols
+        δt = dt
+
+        new{n, m, integration}(
+            obj, N, δt, x0, Xref, Uref, xinds, uinds, cinds, lb, ub, zL, zU, rows, cols
         )
     end
 end
 Base.size(nlp::HybridNLP{n,m}) where {n,m} = (n,m,nlp.N)
 num_primals(nlp::HybridNLP{n,m}) where {n,m} =  (m+n)*(nlp.N-1)
 num_duals(nlp::HybridNLP) = nlp.cinds[end][end]
+
+include("moi.jl")
 
 """
     packZ(nlp, X, U)
@@ -112,7 +118,7 @@ function packZ(nlp, X, U)
         Z[nlp.xinds[k]] = X[k]
         Z[nlp.uinds[k]] = U[k]
     end
-    Z[nlp.xinds[end]] = X[end]
+    # Z[nlp.xinds[end]] = X[end]
     return Z
 end
 
@@ -125,12 +131,10 @@ controls `U`.
 function unpackZ(nlp, Z)
     X = [Z[xi] for xi in nlp.xinds]
     U = [Z[ui] for ui in nlp.uinds]
+
     return X, U
 end
 
-function TrajOptPlots.visualize!(vis, nlp::HybridNLP, Z)
-    TrajOptPlots.visualize!(vis, nlp.model, nlp.tf, unpackZ(nlp, Z)[1])
-end
 
 # includes the interface to Ipopt
 
@@ -159,7 +163,7 @@ function grad_f!(nlp::HybridNLP{n,m}, grad, Z) where {n,m}
     xi,ui = nlp.xinds, nlp.uinds
     obj = nlp.obj
     for k = 1:nlp.N-1
-        x,u = Z[xi[k]], Z[ui[k]]
+        x, u = Z[xi[k]], Z[ui[k]]
         grad[xi[k]] = obj[k].Q*x + obj[k].q
         grad[ui[k]] = obj[k].R*u + obj[k].r
     end
@@ -177,23 +181,12 @@ function dynamics_constraint!(nlp::HybridNLP{n,m}, c, Z) where {n,m}
 
     N = nlp.N                      # number of time steps
 
-    i1, id1 = 1:13, 1:12
-    i2, id2 = 14:26, 13:24
+    X, U = unpackZ(nlp, Z)
 
-    X = Z[xi]
-    X_tmp2 = [[X[i][i1]; nlp.Xref[i]] for i = 1:N]
+    A = [discreteJacobian(nlp.Xref[i], nlp.Uref[i], nlp.δt)[1] for i in 1:N-1]
 
-
-    A = [state_error_jacobian(X[i+1])[i2,id2]' *
-         discreteJacobian(X_tmp2[i], nlp.Uref[i], nlp.δt)[1][i2,i2] *
-         state_error_jacobian(X[i])[i2,id2] for i in 1:N-1]
-
-    dynConstlb = vcat(-A[1] * state_error_half(X[1][i2], nlp.Xref[1]), zeros((N-2)*n))
-    dynConstub = vcat(-A[1] * state_error_half(X[1][i2], nlp.Xref[1]), zeros((N-2)*n))
-
-    # Concatenate the dynamics constraints and earth radius constraint bounds
-    # nlp.lb .= vcat(dynConstlb)
-    # nlp.ub .= vcat(dynConstub)
+    dynConstlb = vcat(-A[1] * (X[1] - nlp.Xref[1]), zeros((N-2)*n))
+    dynConstub = vcat(-A[1] * (X[1] - nlp.Xref[1]), zeros((N-2)*n))
 
     c =  vcat(dynConstlb)
 
@@ -207,8 +200,6 @@ Evaluate all the constraints
 """
 function eval_c!(nlp::HybridNLP, c, Z)
     xi = nlp.xinds
-    c[nlp.cinds[1]] .= Z[xi[1]] - nlp.x0
-    c[nlp.cinds[2]] .= Z[xi[end]] - nlp.xf
     dynamics_constraint!(nlp, c, Z)
 end
 
@@ -217,28 +208,21 @@ end
 
 Calculate the Jacobian of the dynamics constraints, storing the result in the matrix `jac`.
 """
-function dynamics_jacobian!(nlp::HybridNLP{n,m}, jac, Z) where {n,m}
+function dynamics_jacobian!(nlp::HybridNLP{n,m}, jac, Z, Xref, Uref) where {n,m}
 
     xi, ui = nlp.xinds, nlp.uinds
 
-    N = nlp.N                      # number of time steps
+    N = nlp.N
 
-    i1, id1 = 1:13, 1:12
-    i2, id2 = 14:26, 13:24
+    X, U = unpackZ(nlp, Z)
 
-    X = Z[xi]
-    U = Z[ui]
-
-    A = [state_error_jacobian(X[i+1])[i2,id2]' *
-     discreteJacobian(X_tmp2[i], ctrl.Uref[i], ctrl.δt)[1][i2,i2] *
-     state_error_jacobian(X[i])[i2,id2] for i in 1:N-1]
-    B = [state_error_jacobian(X[i+1])[i2,id2]' *
-         discreteJacobian(X_tmp2[i], ctrl.Uref[i], ctrl.δt)[2][i2,:] for i in 1:N-1]
+    A = [discreteJacobian(nlp.Xref[i], Uref[i], nlp.δt)[1] for i in 1:N-1]
+    B = [discreteJacobian(nlp.Xref[i], Uref[i], nlp.δt)[2] for i in 1:N-1]
 
     dynConstMat = blockdiag([sparse([B[i]  -I(n)]) for i in 1:(N-1)]...)
     dynConstMat += blockdiag(spzeros(n, m),
-                            [sparse([A[i]  zeros(n, m)]) for i in 2:(N-2)]...,
-                            sparse([A[end]  zeros(n, m+n)]))
+                             [sparse([A[i]  zeros(n, m)]) for i in 2:(N-2)]...,
+                             sparse([A[end]  zeros(n, m+n)]))
 
     # Concatenate the dynamics constraints and the earth radius constraint
     jac .= vcat(dynConstMat)
@@ -254,7 +238,7 @@ Evaluate the constraint Jacobians.
 function jac_c!(nlp::HybridNLP{n,m}, jac, Z) where {n,m}
     xi,ui = nlp.xinds, nlp.uinds
 
-    dynamics_jacobian!(nlp,jac,Z)
+    dynamics_jacobian!(nlp, jac, Z, nlp.Xref, nlp.Uref)
 
     return nothing
 end
@@ -262,9 +246,11 @@ end
 """
     reference_trajectory
 """
-function stateInterpolate_CW(x_init::Vector, N::Int64, δt::Real)
-    ip1, iq1, iv1, iw1 =  1:3,   4:7,   8:10, 11:13
-    ip2, iq2, iv2, iw2 = 14:16, 17:20, 21:23, 24:26
+function stateInterpolate_CW(x_init, N::Int64, δt::Real)
+    x_init = Vector(x_init)
+
+    ip1, iv1 =  1:3,   4:6
+    ip2, iv2 =  7:9,   10:12
 
     # Position/velocity of chaser WRT target
     p2, v2 = x_init[ip2], x_init[iv2]
@@ -273,19 +259,14 @@ function stateInterpolate_CW(x_init::Vector, N::Int64, δt::Real)
 
     # Build the rollout of target quaternion and angular velocity
     p1s = [roll[i][ip1] for i in 1:N]
-    q1s = [roll[i][iq1] for i in 1:N]
     v1s = [roll[i][iv1] for i in 1:N]
-    w1s = [roll[i][iw1] for i in 1:N]
 
     # Build the reference trajectory for the chaser's orientaiton and angular
     # velocity. This is just the trajectory of the target
     p2s = deepcopy(p1s)
-    q2s = deepcopy(q1s)
-
     v2s = deepcopy(v1s)
-    w2s = deepcopy(w1s)
 
-    return [[p2s[i]; q2s[i]; v2s[i]; w2s[i]] for i in 1:N]
+    return [[p1s[i]; v1s[i]; p2s[i]; v2s[i]] for i in 1:N]
 end
 
 function updateRef(Xref, Uref, x_init,dt)
@@ -293,8 +274,8 @@ function updateRef(Xref, Uref, x_init,dt)
     n = length(Xref[1]) - 1
     m = length(Uref[1])
 
-    ctrl.Xref .= stateInterpolate_CW(x_init, N, dt)
-    ctrl.Uref .= [zeros(m) for _ in N-1] # Uₖ
+    Xref = stateInterpolate_CW(x_init, N, dt)
+    Uref = [zeros(m) for _ in 1:(N-1)] # Uₖ
 
     return Xref, Uref
 end
@@ -304,15 +285,15 @@ end
     use error_State_jacobian here
 """
 function update_obj(Xref, Uref, Q, R, Qf)
-
     obj = map(1:N-1) do k
-        LQRCost(Q,R,Xref[k],Uref[k])
+        LQRCost(Q, R, Xref[k], Uref[k])
     end
     push!(obj, LQRCost(Qf, R, Xref[end], Uref[end]))
-
+    return obj
 end
 
-function simulate(x_init::Vector, u_curr::Vector; dt=0.01, num_steps=1000, verbose=false)
+function simulate(nlp_steps::Int, x_init::Vector, u_curr::Vector, Q::Matrix,
+                  R::Matrix, Qf::Matrix; dt=0.01, num_steps=1000, verbose=false)
     N = nlp_steps
     n = length(x_init)
     m = length(u_curr)
@@ -324,24 +305,17 @@ function simulate(x_init::Vector, u_curr::Vector; dt=0.01, num_steps=1000, verbo
     x_hist = []; u_hist = []; cost_hist = []
     x_hist = vcat(x_hist, [x_next])
 
-    Xref = [zeros(n) for _ = 1:N]
-    Uref = [zeros(m) for _ = 1:N-1]
+    Xref = [zeros(n) for _ in 1:N]
+    Uref = [zeros(m) for _ in 1:(N-1)]
+
     # Reference Trajectory
-    Xref,Uref =  updateRef(Xref, Uref, x_init, dt) #reference_trajectory(model, times)
+    Xref, Uref =  updateRef(Xref, Uref, x_init, dt) #reference_trajectory(model, times)
 
     Xguess = Xref #[x + 0.1*randn(length(x)) for x in Xref]
     Uguess = Uref #[u + 0.1*randn(length(u)) for u in Uref]
 
-    Z0 = packZ(nlp, Xref, Uref);
-
     # Objective
-    Q = Diagonal([fill(2.0, 4); fill(1.0, 4); fill(1.0, 3); fill(1.0, 3)]);
-    R = Diagonal(fill(1e-3,6))
-    Qf = Q;
-    obj = map(1:N-1) do k
-        LQRCost(Q,R,Xref[k],Uref[k])
-    end
-    push!(obj, LQRCost(Qf, R, Xref[end], Uref[end]))
+    obj = update_obj(Xref, Uref, Q, R, Qf)
 
     num_steps ≥ N || error("Number of steps being simulated must be ≥ the controller time horizon")
 
@@ -349,19 +323,24 @@ function simulate(x_init::Vector, u_curr::Vector; dt=0.01, num_steps=1000, verbo
         !verbose && print("step = $i\r")
 
         Xref, Uref = updateRef(Xref, Uref, x_next, dt)
-
+        obj = update_obj(Xref, Uref, Q, R, Qf)
         !verbose || println("step = " , i)
         !verbose || println("\tx_curr = " , x_next)
-        !verbose || println("\tXref[1] = " , ctrl.Xref[1])
-        !verbose || println("\tXref[2] = " , ctrl.Xref[2])
+        !verbose || println("\tXref[1] = " , Xref[1])
+        !verbose || println("\tXref[2] = " , Xref[2])
 
         #need to build nlp each time as grad and hesian changing
         # how to make nlp aware of the quaternion: need error state
-        # use only for translation  
-        nlp = HybridNLP(obj, N, x_next);
+        # use only for translation
+        nlp = HybridNLP(obj, N, dt, x_next);
+
+        nlp.Xref .= Xref
+        nlp.Uref .= Uref
+
+        Z0 = packZ(nlp, Xref, Uref);
 
         Z_sol, solver = solve(Z0, nlp, c_tol=1e-6, tol=1e-6)
-        Xsol,Usol = unpackZ(nlp,Z_sol)
+        Xsol, Usol = unpackZ(nlp, Z_sol)
 
         x_next = Xsol[1]
         u_curr = Usol[1]
@@ -370,10 +349,10 @@ function simulate(x_init::Vector, u_curr::Vector; dt=0.01, num_steps=1000, verbo
         u_hist = vcat(u_hist, [u_curr])
 
         !verbose || println("\tu_curr = " , u_curr)
-        !verbose || println("COST = " , cost(ctrl, x_next))
+        !verbose || println("COST = " , stagecost(obj[1], x_next, u_curr))
         !verbose || println("############################")
 
-        cost_hist = vcat(cost_hist, cost(ctrl, x_next))
+        cost_hist = vcat(cost_hist, stagecost(obj[1], x_next, u_curr))
     end
 
     return x_hist, u_hist, cost_hist

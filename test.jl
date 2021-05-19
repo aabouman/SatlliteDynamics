@@ -36,6 +36,22 @@ plot!(p1, x1s, y1s, background_color=:transparent, legend=false,
 savefig(p1, "graphics/target_orbit.png")
 display(p1)
 
+# %% test NLP
+using LinearAlgebra: Diagonal
+include("MPC.jl");
+
+N = 50
+x_init = [6.371*6, 0, 0, 0, 7, 0,
+          6.371*6 - 3, 0, 0, 0, 7.5, 0]
+u_curr = zeros(3)
+
+Q = Matrix(Diagonal([1., 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]));
+R = Matrix(Diagonal(fill(1e-3,3)))
+Qf = Q;
+
+x_hist, u_hist, cost_hist = simulate(N, x_init, u_curr, Q, R, Qf;
+                                     dt=0.01, num_steps=50, verbose=false);
+
 # %%
 using LinearAlgebra: Diagonal
 include("MPC.jl");
@@ -79,27 +95,6 @@ x_init1 = [6.371*6, 0, 0, 1., 0, 0, 0, 0, 7, 0, 0, 0, 3,
            6.371*6 - 3, 0, 0, 1., 0, 0, 0, 0, 7.5, 0, 0, 0, 1]
 
 x_hist, u_hist, cost_hist = simulate(ctrl, x_init1; num_steps=num_steps, verbose=false);
-
-# %%
-function findlocalmaxima(signal::Vector)
-    inds = Int[]
-    if length(signal) > 1
-        if signal[1] > signal[2]
-            push!(inds, 1)
-        end
-        for i=2:length(signal)-1
-            if signal[i-1] < signal[i] > signal[i+1]
-                push!(inds,i)
-            end
-        end
-        if signal[end]>signal[end-1]
-            push!(inds,length(signal))
-        end
-    end
-    inds
- end
-
-cost_hist[findlocalmaxima(cost_hist)]
 
 # %%
 plot([u_hist[i][1] for i = 1:length(u_hist)], title="linear force",

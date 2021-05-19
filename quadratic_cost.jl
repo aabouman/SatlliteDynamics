@@ -31,7 +31,11 @@ Creates a `QuadraticCost` cost function of the form:
 ```
 """
 function LQRCost(Q::AbstractMatrix, R::AbstractMatrix, xf, uf=zeros(size(R,1)))
-    n,m = length(xf), length(uf)
+
+    # print(size(xf))
+    # print(size(uf))
+
+    n, m = length(xf), length(uf)
     Q = Diagonal(SVector{n}(diag(Q)))
     R = Diagonal(SVector{m}(diag(R)))
     q = -Q*xf
@@ -48,7 +52,7 @@ end
 
 function termcost(cost::QuadraticCost, x, u=nothing)
     Q,R,q,r,c = cost.Q, cost.R, cost.q, cost.r, cost.c
-    return 0.5*x'Q*x + q'x + c 
+    return 0.5*x'Q*x + q'x + c
 end
 
 function cost(obj::Vector{<:QuadraticCost{n,m,T}}, X, U) where {n,m,T}
